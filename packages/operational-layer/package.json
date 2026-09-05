@@ -22,6 +22,6 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly",
-    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
   }
 }

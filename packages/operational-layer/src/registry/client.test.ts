@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { SubgraphRegistrySource, type RegistryToolCaller } from "./client.ts";
+import { SubgraphRegistrySource, type RegistryToolCaller } from "../../dist/index.js";
 
 /**
  * Payloads recorded from `subgraph-registry-mcp@0.9.15` and trimmed to the

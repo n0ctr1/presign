@@ -1,0 +1,20 @@
+# Ledger hardware wallet udev rules.
+#
+# Derived from https://github.com/LedgerHQ/udev-rules with one change: the
+# hidraw node is group-owned by plugdev at mode 0660 rather than world
+# readable and writable at 0666. Any local user can talk to a 0666 node, and
+# on a shared or multi-tenant machine that is a wider grant than this needs.
+#
+# TAG+="uaccess" covers the libusb path by handing the device to the user
+# holding the active local seat. It has no effect over SSH or in a VM with no
+# seat, which is why the explicit plugdev group on the hidraw node matters:
+# that is the path @ledgerhq/device-transport-kit-node-hid actually uses.
+
+# Blue, Nano S, Nano X, Nano S Plus, Stax, Flex
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c97", TAG+="uaccess", TAG+="udev-acl"
+
+# HW.1, original Nano
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2581", ATTRS{idProduct}=="1b7c|2b7c|3b7c|4b7c", TAG+="uaccess", TAG+="udev-acl"
+
+# hidraw transport, used by the Device Management Kit's node-hid transport
+KERNEL=="hidraw*", ATTRS{idVendor}=="2c97", GROUP="plugdev", MODE="0660"

@@ -100,11 +100,18 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Component | State |
 |---|---|
 | Repository scaffold | done |
-| Operational layer (conformance, liveness, capability binding) | in progress |
+| Secret resolution with declared provenance | done |
+| Registry discovery adapter | done |
+| Liveness probe (`_meta` vs chain head) | done — verified against live mainnet |
+| Conformance probe (introspection + probe query) | done — verified against live mainnet |
+| Capability binding + warm cache | in progress |
 | MCP server + `SKILL.md` | not started |
 | Fork simulation + rules R1-R3 | not started |
-| Ledger DMK escalation | not started |
+| Ledger DMK escalation, Key Ring source | not started (needs attached device) |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
+
+Measured against Aave V3 Ethereum (`QmcXE5QV…`) on 2026-09-05: liveness 173 ms,
+conformance 394 ms, deployment 0 blocks behind head at 5 s data age.
 
 ## Repository layout
 

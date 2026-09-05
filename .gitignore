@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+.turbo/
+.eslintcache
+
+# Environment and secrets
+# Secrets are held in the Ledger Key Ring, not in dotfiles. Any .env here is a
+# local convenience only and must never be committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Foundry
+cache/
+out/
+broadcast/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local runtime state (warm cache snapshots, verdict journal spool)
+.local/

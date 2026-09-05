@@ -147,3 +147,39 @@ number rather than a quota that silently runs out.
 **Suggestion:** documenting a rough per-tool query cost next to the free-tier
 limit would help. The limit is easy to find; what a health-check workload
 actually costs against it is not.
+
+---
+
+## 2026-09-05 — reliability ranking puts non-conforming deployments first
+
+**Doing:** warming the capability index for R3 over mainnet lending
+deployments, with a probe budget of six candidates.
+
+**Found:** one conforming deployment out of six. Widening to 18 found five:
+Aave V2, Aave V3, Compound V2, Compound V3 and Morpho Blue. The five that
+conform to the Messari `markets` schema sit at reliability 0.72–0.77, while
+the five *above* them (0.69–0.89) do not conform at all — `protocol-v3`,
+`sofa ethereum opt`, `TellerV2`, `Compoundor`, `LIS_AAVE_PROD`.
+
+So the top of the reliability ranking is systematically the wrong place to
+look for schema conformance. This is not a defect in the score — it measures
+query traction, and a heavily-queried bespoke-schema subgraph legitimately
+outranks a standardised one. But it means any consumer selecting "top N by
+reliability, then check the schema" gets a poor hit rate, and a small N can
+return nothing while good candidates sit at N+1.
+
+**Impact:** direct. Our probe budget is constrained by the free-tier quota, so
+a low hit rate in the ranked window is expensive: we spend queries probing
+deployments that were never going to answer. We raised the probe budget, but
+the underlying mismatch stays.
+
+**Suggestion:** a `schema_family` or `canonical_schema` filter on
+`search_subgraphs` would fix this outright — the crawler already computes
+schema fingerprints and canonical entities, so the information exists. Being
+able to ask for "lending subgraphs whose schema matches the fingerprint family
+Aave V3 belongs to" would turn a 5-in-18 hit rate into something close to 1.0
+and cut the probe cost proportionally.
+
+**Worth noting on the positive side:** five real lending protocols answered
+one rule with zero per-protocol code, which is the whole argument for binding
+rules to schema families rather than to protocols.

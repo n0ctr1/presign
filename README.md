@@ -104,14 +104,20 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Registry discovery adapter | done |
 | Liveness probe (`_meta` vs chain head) | done — verified against live mainnet |
 | Conformance probe (introspection + probe query) | done — verified against live mainnet |
-| Capability binding + warm cache | in progress |
+| Capability binding + warm cache | done — verified against live mainnet |
 | MCP server + `SKILL.md` | not started |
 | Fork simulation + rules R1-R3 | not started |
 | Ledger DMK escalation, Key Ring source | not started — device path validated (Nano X connects over DMK) |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
 
-Measured against Aave V3 Ethereum (`QmcXE5QV…`) on 2026-09-05: liveness 173 ms,
-conformance 394 ms, deployment 0 blocks behind head at 5 s data age.
+Measured against live mainnet on 2026-09-05: liveness 173 ms, conformance
+394 ms, warming R3 across six lending candidates 611 ms, cached resolve
+sub-millisecond.
+
+**Coverage.** Of 18 mainnet lending deployments the registry ranks, 5 answer
+the Messari `markets` fields R3 reads — Aave V2, Aave V3, Compound V2,
+Compound V3 and Morpho Blue — with no per-protocol code. That is the coverage
+lever: one rule, one schema family, every protocol that speaks it.
 
 ## Repository layout
 

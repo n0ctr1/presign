@@ -80,3 +80,70 @@ and directly useful.
 
 Worth saying plainly since most feedback entries are friction: this was the
 part of day 1 that cost the least time.
+
+---
+
+## 2026-09-05 — the gateway answers HTTP 200 with a GraphQL error body
+
+**Doing:** wiring the Studio API key into the gateway client and handling
+auth failure.
+
+**Found:** an unauthenticated or wrongly-keyed query returns **HTTP 200** with
+`{"errors":[…]}` rather than a 401. The registry's own README flags the same
+behaviour, so this is known, but it is a sharp edge: the natural client shape
+is `if (!response.ok) throw`, and that path reports a broken API key as a
+successful response carrying no data.
+
+**Impact:** for a dashboard, a confusing empty state. For us it is worse — a
+verdict engine that reads "no data" as "no problem found" fails *open* on a
+credential error, which is the exact failure mode the project exists to
+prevent. Our client therefore inspects the GraphQL error body before it looks
+at the status code.
+
+**Suggestion:** return 401 for authentication failures. If the 200 is load-
+bearing for GraphQL-spec compliance, an `x-graph-auth-error` response header
+would let clients distinguish the case without parsing error strings.
+
+---
+
+## 2026-09-05 — `_meta` is the one thing every deployment answers, and it is enough
+
+**Doing:** building the freshness check across a heterogeneous corpus.
+
+**Found:** `_meta { block { number timestamp } hasIndexingErrors }` is served
+by every graph-node deployment regardless of schema, which is what makes a
+single liveness probe work corpus-wide without per-protocol special-casing.
+`block.timestamp` is the useful part: comparing it against wall clock gives
+data age directly, with no second lookup.
+
+Measured on Aave V3 Ethereum (`QmcXE5QV…`): 0 blocks behind head, 5 s data
+age, 173 ms round trip including an independent chain-head RPC call. Querying
+by pinned deployment id (`/api/deployments/id/…`) works exactly as it does by
+subgraph id, which is what lets us pin provenance without giving up latency.
+
+**Suggestion:** none — this worked as documented. Noting it because the
+combination of "universally available" and "cheap enough to poll" is what made
+the freshness layer feasible inside a hackathon week, and it is worth knowing
+that `_meta` carries `timestamp` and not merely `number`.
+
+---
+
+## 2026-09-05 — free-tier quota is the real constraint on a health-check layer
+
+**Doing:** planning warm-up intervals for the capability cache.
+
+**Found:** Subgraph Studio's free tier is 100,000 queries/month. Our
+conformance check costs two introspection queries plus one probe per
+deployment, and liveness costs one more per refresh. Warming a few hundred
+deployments at a one-minute refresh would exhaust the month's quota in well
+under a day.
+
+**Impact:** this is a design constraint rather than a defect, and it pushed
+freshness budgets and cache TTLs into the architecture on day 2 instead of
+becoming a rate-limit surprise mid-demo. It is also a concrete argument for
+the x402 gateway at \$0.01/query: cost per verdict becomes an observable
+number rather than a quota that silently runs out.
+
+**Suggestion:** documenting a rough per-tool query cost next to the free-tier
+limit would help. The limit is easy to find; what a health-check workload
+actually costs against it is not.

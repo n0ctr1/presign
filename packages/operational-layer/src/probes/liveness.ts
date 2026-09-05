@@ -10,6 +10,7 @@ import type { GatewayClient } from "../gateway/client.js";
 import type {
   ChainHeadSource,
   DeploymentId,
+  LivenessChecker,
   LivenessReport,
   NetworkId,
 } from "../types.js";
@@ -39,7 +40,7 @@ export interface LivenessProbeOptions {
   readonly now?: () => Date;
 }
 
-export class LivenessProbe {
+export class LivenessProbe implements LivenessChecker {
   readonly #gateway: GatewayClient;
   readonly #chainHead: ChainHeadSource;
   readonly #now: () => Date;

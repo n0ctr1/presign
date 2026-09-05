@@ -9,15 +9,12 @@
  */
 
 import { GatewayQueryError, type GatewayClient } from "../gateway/client.js";
-import type { ConformanceReport, DeploymentId } from "../types.js";
-
-/** Which entity a rule reads, and which fields on it. */
-export interface FieldRequirement {
-  /** Root query field, e.g. `markets`. */
-  readonly rootField: string;
-  /** Fields on that entity, e.g. `totalValueLockedUSD`. */
-  readonly fields: readonly string[];
-}
+import type {
+  ConformanceChecker,
+  ConformanceReport,
+  DeploymentId,
+  FieldRequirement,
+} from "../types.js";
 
 /**
  * Walks the query type once to find `rootField` and unwrap its type.
@@ -67,7 +64,7 @@ function namedType(ref: TypeRef | undefined | null): string | null {
   return null;
 }
 
-export class ConformanceProbe {
+export class ConformanceProbe implements ConformanceChecker {
   readonly #gateway: GatewayClient;
   readonly #now: () => Date;
 

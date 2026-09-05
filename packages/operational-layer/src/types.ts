@@ -131,6 +131,8 @@ export interface DeploymentRecord {
 export interface RuleRequirement {
   readonly ruleId: RuleId;
   readonly schemaFamily: SchemaFamily;
+  /** Root query field the rule reads, e.g. `markets`. */
+  readonly rootField: string;
   /** Every one of these fields must be answered; a partial match is not usable. */
   readonly requiredFields: readonly string[];
   /** Freshness budget. A deployment lagging past this cannot serve the rule. */
@@ -143,9 +145,15 @@ export interface RuleRequirement {
  * same fail-closed verdict but to different operator action.
  */
 export type UnavailabilityReason =
+  /** The index has never been warmed for this rule. An operator error. */
+  | "not_warmed"
+  /** Discovery returned nothing for the schema family on this network. */
   | "no_candidates"
+  /** Candidates exist, but none answer every field the rule reads. */
   | "no_conforming_deployment"
+  /** Conforming deployments exist, but all are past the freshness budget. */
   | "all_candidates_stale"
+  /** Conforming deployments exist, but all report indexing errors. */
   | "all_candidates_erroring";
 
 /**
@@ -192,6 +200,36 @@ export interface DiscoverySource {
     address: string,
     network: NetworkId,
   ): Promise<readonly DeploymentCandidate[]>;
+}
+
+/** Which entity a rule reads, and which fields on it. */
+export interface FieldRequirement {
+  /** Root query field, e.g. `markets`. */
+  readonly rootField: string;
+  /** Fields on that entity, e.g. `totalValueLockedUSD`. */
+  readonly fields: readonly string[];
+}
+
+/**
+ * Establishes which fields a deployment actually answers.
+ *
+ * An interface rather than the concrete probe so the capability index can be
+ * driven by recorded reports in tests, and so an implementation backed by a
+ * different transport is a substitution rather than a rewrite.
+ */
+export interface ConformanceChecker {
+  check(
+    deploymentId: DeploymentId,
+    requirement: FieldRequirement,
+  ): Promise<ConformanceReport>;
+}
+
+/** Measures how far a deployment is behind and how old its newest data is. */
+export interface LivenessChecker {
+  check(
+    deploymentId: DeploymentId,
+    network: NetworkId,
+  ): Promise<LivenessReport>;
 }
 
 /**

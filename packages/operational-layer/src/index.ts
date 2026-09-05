@@ -10,11 +10,14 @@ export type {
   CapabilityResolution,
   ChainHeadSource,
   ChainId,
+  ConformanceChecker,
   ConformanceReport,
   DeploymentCandidate,
   DeploymentId,
   DeploymentRecord,
   DiscoverySource,
+  FieldRequirement,
+  LivenessChecker,
   LivenessReport,
   NetworkId,
   RuleId,
@@ -42,4 +45,10 @@ export {
 } from "./chain/rpc.js";
 
 export { LivenessProbe, type LivenessProbeOptions } from "./probes/liveness.js";
-export { ConformanceProbe, type FieldRequirement } from "./probes/conformance.js";
+
+export {
+  CapabilityIndex,
+  effectiveLagSeconds,
+  type CapabilityIndexOptions,
+} from "./capability/index.js";
+export { ConformanceProbe } from "./probes/conformance.js";

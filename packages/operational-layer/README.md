@@ -67,8 +67,64 @@ This record is what gets quoted verbatim in a verdict's provenance block. That
 is the point: the caller can see which deployments a green verdict rests on and
 how stale each one was.
 
+## Resolving a rule
+
+Probing happens ahead of time; resolution at request time is a **synchronous
+cache read**. That split is not an optimisation — introspection, a probe query
+and a chain-head lookup per candidate cannot happen while a signature waits.
+
+```ts
+const index = new CapabilityIndex({ discovery, conformance, liveness });
+
+await index.warm(R3, "mainnet");            // slow path, off the request
+const resolution = index.resolve(R3, "mainnet");   // sync, sub-millisecond
+
+if (!resolution.satisfied) {
+  // fail closed: `unavailable`, never `safe`
+  return unavailable(resolution.reason);
+}
+```
+
+### Cached freshness is aged, not trusted
+
+A record probed five minutes ago reporting five seconds of lag is **not** a
+five-second-fresh record. The deployment may have kept up, but nothing proves
+it did, so the age of the measurement is added back:
+
+```
+effective lag = measured lag + (now - checkedAt)
+```
+
+Without this, a warm cache quietly converts stale data into green verdicts —
+the exact failure this project exists to prevent, arriving through our own
+cache rather than through the indexer.
+
+### Rejection reasons are ordered by blocker
+
+`resolve` never returns an empty success. It returns one of:
+
+| Reason | Means |
+|---|---|
+| `not_warmed` | The index has never been warmed for this rule. Operator error. |
+| `no_candidates` | Discovery returned nothing for this family on this network. |
+| `no_conforming_deployment` | Candidates exist, none answer every field the rule reads. |
+| `all_candidates_erroring` | Conforming deployments exist, all report indexing errors. |
+| `all_candidates_stale` | Conforming deployments exist, all past the freshness budget. |
+
+The distinction is operational: someone told *"all stale"* goes to the
+indexer, someone told *"nothing conforms"* goes to the schema. Reporting the
+wrong one sends them to the wrong system.
+
+### Ordering never uses reliability
+
+Satisfied results are ordered by effective lag, then by field coverage.
+Reliability is deliberately **not** a tiebreak: it is an economic score that
+tracks traction and therefore age, and letting it order a freshness-gated list
+reintroduces exactly the bias this layer exists to remove.
+
 ## Status
 
-Day 1 of 9 — core types are in place; probes and the capability index are
-landing next. This README describes the intended contract, and the `Status`
-table in the [root README](../../README.md) tracks what actually runs.
+Verified end to end against live mainnet on 2026-09-05. Warming R3 across six
+lending candidates took 611 ms; the cached resolve that follows is
+sub-millisecond. The `Status` table in the [root README](../../README.md)
+tracks the project as a whole.

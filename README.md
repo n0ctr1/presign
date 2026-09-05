@@ -107,7 +107,7 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Capability binding + warm cache | in progress |
 | MCP server + `SKILL.md` | not started |
 | Fork simulation + rules R1-R3 | not started |
-| Ledger DMK escalation, Key Ring source | not started (needs attached device) |
+| Ledger DMK escalation, Key Ring source | not started — device path validated (Nano X connects over DMK) |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
 
 Measured against Aave V3 Ethereum (`QmcXE5QV…`) on 2026-09-05: liveness 173 ms,

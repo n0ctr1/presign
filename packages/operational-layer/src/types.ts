@@ -87,9 +87,27 @@ export interface LivenessReport {
   readonly deploymentId: DeploymentId;
   /** Latest block the deployment has indexed. */
   readonly indexedBlock: number;
+  /** Timestamp of that block, as the chain recorded it. */
+  readonly indexedBlockTimestamp: number;
   /** Chain head at the moment of the check. */
   readonly headBlock: number;
-  /** Wall-clock distance between the two blocks, in seconds. */
+  /**
+   * How far the indexer is behind the chain.
+   *
+   * Kept separate from {@link lagSeconds} because the two answer different
+   * questions and can diverge. If the chain itself stalls, the data ages while
+   * the indexer stays exactly at head: `lagSeconds` grows, `blocksBehind` stays
+   * at zero. Collapsing them into one number means blaming the indexer for a
+   * halted chain, or worse, treating stale data as fresh because the indexer is
+   * technically caught up.
+   */
+  readonly blocksBehind: number;
+  /**
+   * Age of the newest indexed block in seconds, against wall clock.
+   *
+   * This is the number the freshness budget is enforced against: for a verdict
+   * returned before a signature, what matters is how old the data is, not why.
+   */
   readonly lagSeconds: number;
   /** graph-node's own error flag. A true value disqualifies the deployment. */
   readonly hasIndexingErrors: boolean;

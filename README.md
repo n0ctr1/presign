@@ -105,7 +105,7 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Liveness probe (`_meta` vs chain head) | done — verified against live mainnet |
 | Conformance probe (introspection + probe query) | done — verified against live mainnet |
 | Capability binding + warm cache | done — verified against live mainnet |
-| MCP server + `SKILL.md` | not started |
+| MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
 | Fork simulation + rules R1-R3 | not started |
 | Ledger DMK escalation, Key Ring source | not started — device path validated (Nano X connects over DMK) |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
@@ -122,10 +122,24 @@ lever: one rule, one schema family, every protocol that speaks it.
 ## Repository layout
 
 ```
-packages/          workspaces (see each package README)
-docs/architecture  diagrams and design notes
-docs/feedback/     per-partner tooling feedback, written as we go
+packages/operational-layer   freshness, conformance, capability binding
+packages/mcp-server          MCP surface + SKILL.md for other agents
+packages/secrets             credential resolution with declared provenance
+docs/feedback/               per-partner tooling feedback, written as we go
+docs/setup/                  device and environment runbooks
 ```
+
+### Using the data layer without the rest
+
+The operational layer ships as an MCP server so another team can consume
+freshness-gated data selection without adopting our rules, our simulation, or
+our opinions about what is risky:
+
+```bash
+claude mcp add presign -- npx -y @presign/mcp-server
+```
+
+See [`packages/mcp-server/SKILL.md`](./packages/mcp-server/SKILL.md).
 
 ## Development
 

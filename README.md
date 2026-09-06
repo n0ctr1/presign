@@ -106,7 +106,7 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Conformance probe (introspection + probe query) | done — verified against live mainnet |
 | Capability binding + warm cache | done — verified against live mainnet |
 | MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
-| Fork simulation + rules R1-R3 | not started |
+| Fork simulation + rules R1-R3 | done — verified against live mainnet fork |
 | Ledger DMK escalation, Key Ring source | not started — device path validated (Nano X connects over DMK) |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
 
@@ -119,10 +119,27 @@ the Messari `markets` fields R3 reads — Aave V2, Aave V3, Compound V2,
 Compound V3 and Morpho Blue — with no per-protocol code. That is the coverage
 lever: one rule, one schema family, every protocol that speaks it.
 
+### The guarantee, demonstrated
+
+Four scenarios against a live mainnet fork. Only the last two differ, and only
+in the freshness budget:
+
+| Scenario | Verdict |
+|---|---|
+| Unlimited USDC approval to a registry-flagged spender | `high` — do not sign |
+| Bounded approval to the same upgradeable token | `medium` — confirm on device |
+| Call to Aave V3 Pool, healthy, fresh data | `low` — source named, 12.3 s lag |
+| Same call, 1-second freshness budget | `unavailable` — do not sign |
+
+The last row is the point. Same protocol, same data, same code path: when fresh
+context cannot be obtained the answer is `unavailable`, and `unavailable` is
+structurally distinct from `low`.
+
 ## Repository layout
 
 ```
 packages/operational-layer   freshness, conformance, capability binding
+packages/verdict-engine      simulation, rules R1-R3, tiered verdict
 packages/mcp-server          MCP surface + SKILL.md for other agents
 packages/secrets             credential resolution with declared provenance
 docs/feedback/               per-partner tooling feedback, written as we go

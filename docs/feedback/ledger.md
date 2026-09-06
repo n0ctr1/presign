@@ -114,3 +114,72 @@ disconnected cleanly
 Session-id-based connection management is the right shape for our use: the
 gateway is long-lived and needs to hold a device handle across many verdicts
 rather than reconnecting per signature. No complaints here.
+
+---
+
+## 2026-09-06 — `connect()` needs the discovered object verbatim, and says "Unknown transport" otherwise
+
+**Doing:** wrapping discovery and connection in our own small device class.
+
+**Found:** `startDiscovering()` emits device objects, and `connect({ device })`
+must receive **the same object**, unchanged. We projected it onto our own
+`{ id, name, model }` shape first — every field we needed was there — and
+`connect()` then failed with:
+
+```
+TransportNotSupportedError: Unknown transport
+```
+
+The emitted object carries a transport identifier that is not part of the
+published `DiscoveredDevice`-style type surface, so dropping it is invisible at
+compile time and the failure names the transport rather than the missing field.
+
+**Impact:** maybe twenty minutes, and only because the error is misleading.
+"Unknown transport" reads like a missing or unregistered transport — a setup or
+driver problem — rather than "the object you gave me is not the object I
+emitted". We went looking at `nodeHidTransportFactory` registration and udev
+before suspecting our own mapping.
+
+**Suggestion:** either type the discovered device as opaque so projecting it is
+a compile error, or have `connect()` report `device object is missing its
+transport identifier; pass the object emitted by startDiscovering unchanged`.
+The second is a one-line change and would have saved the whole detour.
+
+---
+
+## 2026-09-06 — device actions block on physical confirmation with no way to know in advance
+
+**Doing:** listing installed apps to check whether the Ethereum app is present.
+
+**Found:** `ListAppsDeviceAction` reaches
+`requiredUserInteraction: "allow-list-apps"` and then waits for a button press.
+That is correct and desirable — it is the user's device. But there is no way to
+ask beforehand *whether* an action will need physical confirmation, so a
+headless or CI caller cannot distinguish "this will block until a human acts"
+from "this is slow" until it has already blocked.
+
+`requiredUserInteraction` on the pending state is the right signal and we use
+it, but it arrives only once the action is already waiting.
+
+**Suggestion:** expose the required-interaction set statically per device
+action, so a caller can decide up front whether to attempt it unattended.
+
+---
+
+## 2026-09-06 — `openApp` fails with "Unknown application name" when the app is absent
+
+**Doing:** the first live signing run against the device.
+
+**Found:** the signer's `openApp` step returned `Unknown application name`. The
+Ethereum app is not installed on this device. The message is accurate but
+easily misread as "the name string is wrong" — our first instinct was to check
+whether the signer passes `"Ethereum"` correctly — rather than "that app is not
+on this device".
+
+**Impact:** small, and the chain around it behaved exactly as designed: the
+error propagated through the device action into our `device_error` result with
+a readable detail, and nothing hung.
+
+**Suggestion:** distinguish the two cases in the message, e.g. `application
+"Ethereum" is not installed on this device`. The device already knows which
+apps it has.

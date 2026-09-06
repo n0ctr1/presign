@@ -57,36 +57,50 @@ export class LedgerDevice {
 
     const timeoutMs = options.discoveryTimeoutMs ?? 5_000;
 
-    const found = await new Promise<DiscoveredDevice[]>((resolve, reject) => {
-      const devices: DiscoveredDevice[] = [];
-      const subscription = (
-        dmk.startDiscovering({}) as unknown as {
-          subscribe(handlers: {
-            next: (device: unknown) => void;
-            error: (error: unknown) => void;
-          }): { unsubscribe(): void };
-        }
-      ).subscribe({
-        next: (device) => {
-          const d = device as {
-            id?: string;
-            name?: string;
-            deviceModel?: { model?: string };
-          };
-          devices.push({
-            id: d.id ?? "",
-            name: d.name ?? "Ledger",
-            model: d.deviceModel?.model ?? "unknown",
-          });
-        },
-        error: reject,
-      });
+    /*
+     * The discovered object is passed to connect() unchanged.
+     *
+     * It carries a transport identifier that the kit matches against its
+     * registered transports, and that field is not part of any published type.
+     * Projecting the device onto our own shape first and connecting with that
+     * loses it, and the kit then fails with "Unknown transport" — which reads
+     * like a missing driver rather than a dropped field.
+     */
+    const found = await new Promise<{ raw: unknown; info: DiscoveredDevice }[]>(
+      (resolve, reject) => {
+        const devices: { raw: unknown; info: DiscoveredDevice }[] = [];
+        const subscription = (
+          dmk.startDiscovering({}) as unknown as {
+            subscribe(handlers: {
+              next: (device: unknown) => void;
+              error: (error: unknown) => void;
+            }): { unsubscribe(): void };
+          }
+        ).subscribe({
+          next: (device) => {
+            const d = device as {
+              id?: string;
+              name?: string;
+              deviceModel?: { model?: string };
+            };
+            devices.push({
+              raw: device,
+              info: {
+                id: d.id ?? "",
+                name: d.name ?? "Ledger",
+                model: d.deviceModel?.model ?? "unknown",
+              },
+            });
+          },
+          error: reject,
+        });
 
-      setTimeout(() => {
-        subscription.unsubscribe();
-        resolve(devices);
-      }, timeoutMs);
-    });
+        setTimeout(() => {
+          subscription.unsubscribe();
+          resolve(devices);
+        }, timeoutMs);
+      },
+    );
 
     const first = found[0];
     if (first === undefined) {
@@ -97,7 +111,7 @@ export class LedgerDevice {
     }
 
     const sessionId = (await dmk.connect({
-      device: first as never,
+      device: first.raw as never,
     })) as unknown as string;
 
     const connected = dmk.getConnectedDevice({ sessionId } as never) as unknown as {
@@ -108,8 +122,8 @@ export class LedgerDevice {
     return new LedgerDevice(
       dmk,
       sessionId,
-      connected.name ?? first.name,
-      connected.modelId ?? first.model,
+      connected.name ?? first.info.name,
+      connected.modelId ?? first.info.model,
     );
   }
 

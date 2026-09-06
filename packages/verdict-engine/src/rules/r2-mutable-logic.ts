@@ -18,7 +18,8 @@
 
 import { keccak256, toHex, type Address, type Hex } from "viem";
 
-import type { Finding, Rule, RuleContext, StateDiff } from "../types.js";
+import { evaluated } from "../types.js";
+import type { Finding, Rule, RuleContext, RuleOutcome, StateDiff } from "../types.js";
 
 /** `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`. */
 export const EIP1967_IMPLEMENTATION_SLOT =
@@ -111,14 +112,14 @@ export class MutableLogicRule implements Rule {
       options.meaningfulDelaySeconds ?? MEANINGFUL_DELAY_SECONDS;
   }
 
-  async evaluate(context: RuleContext): Promise<readonly Finding[]> {
+  async evaluate(context: RuleContext): Promise<RuleOutcome> {
     const target = context.transaction.to;
     // Contract creation has no existing code to be mutable.
-    if (target === null) return [];
+    if (target === null) return evaluated([]);
 
     const address = target.toLowerCase() as Address;
     const proxy = await this.#readProxy(context, address);
-    if (proxy === null) return [];
+    if (proxy === null) return evaluated([]);
 
     const findings: Finding[] = [];
 
@@ -164,10 +165,10 @@ export class MutableLogicRule implements Rule {
           admin_slot_empty: true,
         },
       });
-      return findings;
+      return evaluated(findings);
     }
 
-    if (this.#allowlist.has(proxy.admin)) return findings;
+    if (this.#allowlist.has(proxy.admin)) return evaluated(findings);
 
     const control = await this.#classifyAdmin(context, proxy.admin);
     findings.push({
@@ -188,7 +189,7 @@ export class MutableLogicRule implements Rule {
       },
     });
 
-    return findings;
+    return evaluated(findings);
   }
 
   async #readProxy(

@@ -12,6 +12,7 @@ export type {
   Hex,
   Rule,
   RuleContext,
+  RuleOutcome,
   RiskTier,
   Severity,
   StateDiff,
@@ -20,7 +21,7 @@ export type {
   VerdictProvenance,
 } from "./types.js";
 
-export { TIER_ACTION } from "./types.js";
+export { evaluated, TIER_ACTION } from "./types.js";
 
 export { AnvilFork, AnvilStartupError, type AnvilForkOptions } from "./simulation/fork.js";
 export { ForkSimulator, SimulationError } from "./simulation/simulator.js";
@@ -42,3 +43,15 @@ export {
   ZEPPELINOS_IMPLEMENTATION_SLOT,
   type MutableLogicRuleOptions,
 } from "./rules/r2-mutable-logic.js";
+
+export {
+  CHAIN_TO_NETWORK,
+  InvariantBreachRule,
+  type InvariantBreachRuleOptions,
+  type ProtocolContext,
+} from "./rules/r3-invariant-breach.js";
+
+export {
+  OperationalProtocolContext,
+  type OperationalProtocolContextOptions,
+} from "./protocol/operational-context.js";

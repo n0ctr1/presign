@@ -39,7 +39,17 @@ export const R3_LENDING: RuleRequirement = {
   ruleId: "R3",
   schemaFamily: "lending-cdp",
   rootField: "markets",
-  requiredFields: ["totalValueLockedUSD", "totalBorrowBalanceUSD"],
+  // Every field the invariant check reads is required, not just the two that
+  // identify the schema. Conformance gates on this list, so a field the check
+  // needs but the gate omits would fail the whole query at evaluation time —
+  // and a rule that dies on a missing field is indistinguishable, from the
+  // caller's side, from a protocol that is fine.
+  requiredFields: [
+    "totalValueLockedUSD",
+    "totalDepositBalanceUSD",
+    "totalBorrowBalanceUSD",
+    "inputTokenBalance",
+  ],
   maxLagSeconds: DEFAULT_MAX_LAG_SECONDS,
 };
 

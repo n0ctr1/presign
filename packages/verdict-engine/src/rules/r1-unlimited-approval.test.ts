@@ -39,6 +39,16 @@ function diffWriting(slot: string, value: string, token = USDC): StateDiff {
   } as unknown as StateDiff;
 }
 
+/** Rules return an outcome; these tests are about the findings inside it. */
+async function findingsOf(rule: { evaluate: (c: never) => Promise<unknown> }, ctx: never) {
+  const outcome = (await rule.evaluate(ctx)) as {
+    status: string;
+    findings?: readonly { severity: string; ruleId: string; title: string; evidence: Record<string, unknown> }[];
+  };
+  assert.equal(outcome.status, "evaluated");
+  return outcome.findings ?? [];
+}
+
 const context = (tx: UnsignedTransaction, diff: StateDiff) =>
   ({
     transaction: tx,
@@ -65,7 +75,8 @@ test("pulls address-shaped words out of calldata and skips the rest", () => {
 
 test("proves an unlimited approval from the diff, naming the mapping slot", async () => {
   const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
-  const findings = await new UnlimitedApprovalRule().evaluate(
+  const findings = await findingsOf(
+    new UnlimitedApprovalRule(),
     context(transaction(), diffWriting(slot, MAX)),
   );
 
@@ -85,7 +96,8 @@ test("catches an approval the calldata does not mention", async () => {
   // A router call whose calldata names the spender nowhere. Decoding
   // `approve` would find nothing here; the write is unmistakable.
   const tx = transaction({ to: SPENDER, data: "0xdeadbeef" });
-  const findings = await new UnlimitedApprovalRule().evaluate(
+  const findings = await findingsOf(
+    new UnlimitedApprovalRule(),
     context(tx, diffWriting(slot, MAX)),
   );
 
@@ -98,7 +110,8 @@ test("ignores a bounded approval", async () => {
   const thousandUsdc = `0x${(1000n * 10n ** 6n).toString(16).padStart(64, "0")}`;
 
   assert.deepEqual(
-    await new UnlimitedApprovalRule().evaluate(
+    await findingsOf(
+      new UnlimitedApprovalRule(),
       context(transaction(), diffWriting(slot, thousandUsdc)),
     ),
     [],
@@ -110,7 +123,8 @@ test("ignores a large write that is not an allowance slot", async () => {
   // false positive, and a scanner that flags healthy contracts is worse than
   // one with narrow coverage.
   assert.deepEqual(
-    await new UnlimitedApprovalRule().evaluate(
+    await findingsOf(
+      new UnlimitedApprovalRule(),
       context(transaction(), diffWriting(`0x${"ab".repeat(32)}`, MAX)),
     ),
     [],
@@ -124,7 +138,7 @@ test("reports nothing when the transaction reverts", async () => {
   // An approval that never lands must not be reported, or callers learn to
   // ignore the rule.
   assert.deepEqual(
-    await new UnlimitedApprovalRule().evaluate(context(transaction(), diff)),
+    await findingsOf(new UnlimitedApprovalRule(), context(transaction(), diff)),
     [],
   );
 });
@@ -134,7 +148,7 @@ test("honours an allowlisted spender", async () => {
   const rule = new UnlimitedApprovalRule({ allowlist: [SPENDER as never] });
 
   assert.deepEqual(
-    await rule.evaluate(context(transaction(), diffWriting(slot, MAX))),
+    await findingsOf(rule, context(transaction(), diffWriting(slot, MAX))),
     [],
   );
 });
@@ -143,7 +157,8 @@ test("escalates to critical for a spender in the incident registry", async () =>
   const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
   const rule = new UnlimitedApprovalRule({ incidentRegistry: [SPENDER as never] });
 
-  const findings = await rule.evaluate(
+  const findings = await findingsOf(
+    rule,
     context(transaction(), diffWriting(slot, MAX)),
   );
 
@@ -155,7 +170,8 @@ test("flags a very large approval that is not exactly max", async () => {
   const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
   const huge = `0x${(2n ** 200n).toString(16).padStart(64, "0")}`;
 
-  const findings = await new UnlimitedApprovalRule().evaluate(
+  const findings = await findingsOf(
+    new UnlimitedApprovalRule(),
     context(transaction(), diffWriting(slot, huge)),
   );
 

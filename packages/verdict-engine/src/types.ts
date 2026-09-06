@@ -140,9 +140,33 @@ export interface RuleContext {
   readonly call: (address: Address, data: Hex) => Promise<Hex | null>;
 }
 
+/**
+ * What a rule concluded, or that it could not conclude anything.
+ *
+ * The `unavailable` arm is the fail-closed guarantee expressed as a type. A
+ * rule that returns an empty finding list is saying "I looked and found
+ * nothing wrong". A rule that could not obtain fresh context must say
+ * something different, and if both were an empty array the engine would have
+ * no way to tell them apart — which is exactly how a green verdict gets issued
+ * on absent data.
+ */
+export type RuleOutcome =
+  | { readonly status: "evaluated"; readonly findings: readonly Finding[] }
+  | {
+      readonly status: "unavailable";
+      /** Machine-readable cause, e.g. `all_candidates_stale`. */
+      readonly reason: string;
+      readonly detail: string;
+    };
+
 /** A rule turns evidence into findings. Never throws for "nothing found". */
 export interface Rule {
   readonly id: string;
   readonly title: string;
-  evaluate(context: RuleContext): Promise<readonly Finding[]>;
+  evaluate(context: RuleContext): Promise<RuleOutcome>;
+}
+
+/** Convenience for rules that always reach a conclusion. */
+export function evaluated(findings: readonly Finding[]): RuleOutcome {
+  return { status: "evaluated", findings };
 }

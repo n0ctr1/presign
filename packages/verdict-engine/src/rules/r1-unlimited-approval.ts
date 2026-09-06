@@ -21,7 +21,8 @@
 
 import { concat, keccak256, pad, toHex, type Address, type Hex } from "viem";
 
-import type { Finding, Rule, RuleContext } from "../types.js";
+import { evaluated } from "../types.js";
+import type { Finding, Rule, RuleContext, RuleOutcome } from "../types.js";
 
 /**
  * Above this, an allowance cannot be a considered budget.
@@ -96,12 +97,12 @@ export class UnlimitedApprovalRule implements Rule {
     this.#maxMappingSlot = options.maxMappingSlot ?? DEFAULT_MAX_MAPPING_SLOT;
   }
 
-  evaluate(context: RuleContext): Promise<readonly Finding[]> {
+  evaluate(context: RuleContext): Promise<RuleOutcome> {
     const { transaction, diff } = context;
 
     // A reverted transaction changes nothing. Reporting an approval that never
     // lands would train a caller to ignore this rule.
-    if (diff.revertReason !== null) return Promise.resolve([]);
+    if (diff.revertReason !== null) return Promise.resolve(evaluated([]));
 
     const owner = transaction.from.toLowerCase() as Address;
     const spenders = new Set<Address>(addressCandidates(transaction.data));
@@ -151,7 +152,7 @@ export class UnlimitedApprovalRule implements Rule {
       }
     }
 
-    return Promise.resolve(findings);
+    return Promise.resolve(evaluated(findings));
   }
 
   /** Which candidate spender, if any, this slot is the allowance for. */

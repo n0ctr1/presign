@@ -36,6 +36,17 @@ interface World {
   calls?: Record<string, string | null>;
 }
 
+async function findingsOf(rule: { evaluate: (c: never) => Promise<unknown> }, ctx: never) {
+  const outcome = (await rule.evaluate(ctx)) as {
+    status: string;
+    findings?: readonly {
+      severity: string; title: string; detail: string; evidence: Record<string, unknown>;
+    }[];
+  };
+  assert.equal(outcome.status, "evaluated");
+  return outcome.findings ?? [];
+}
+
 function context(world: World, tx = transaction(), diff = emptyDiff) {
   return {
     transaction: tx,
@@ -56,11 +67,11 @@ test("slot constants are derived from their EIP preimages, not copied", () => {
 });
 
 test("reports nothing for a contract that is not a proxy", async () => {
-  assert.deepEqual(await new MutableLogicRule().evaluate(context({})), []);
+  assert.deepEqual(await findingsOf(new MutableLogicRule(), context({})), []);
 });
 
 test("reports nothing for contract creation", async () => {
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({}, transaction(null)),
   );
   assert.deepEqual(findings, []);
@@ -69,7 +80,7 @@ test("reports nothing for contract creation", async () => {
 test("an EOA admin is critical: one key, no delay, no notice", async () => {
   // USDC's real shape, confirmed on mainnet: a zeppelinos proxy whose admin
   // has no code at all.
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({
       storage: {
         [ZEPPELINOS_IMPLEMENTATION_SLOT]: word(IMPL),
@@ -86,7 +97,7 @@ test("an EOA admin is critical: one key, no delay, no notice", async () => {
 });
 
 test("a timelock beyond the threshold downgrades to info", async () => {
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({
       storage: {
         [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL),
@@ -103,7 +114,7 @@ test("a timelock beyond the threshold downgrades to info", async () => {
 });
 
 test("a short timelock stays a warning", async () => {
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({
       storage: {
         [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL),
@@ -120,7 +131,7 @@ test("a short timelock stays a warning", async () => {
 });
 
 test("a contract admin with no recognised timelock interface is a warning", async () => {
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({
       storage: {
         [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL),
@@ -145,7 +156,7 @@ test("an upgrade inside this very transaction is critical", async () => {
     revertReason: null,
   } as unknown as StateDiff;
 
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context(
       {
         storage: {
@@ -168,7 +179,7 @@ test("an upgrade inside this very transaction is critical", async () => {
 test("an allowlisted admin suppresses the admin finding", async () => {
   const rule = new MutableLogicRule({ allowlist: [ADMIN as never] });
 
-  const findings = await rule.evaluate(
+  const findings = await findingsOf(rule,
     context({
       storage: {
         [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL),
@@ -183,7 +194,7 @@ test("an allowlisted admin suppresses the admin finding", async () => {
 test("an empty admin slot is reported, not assumed immutable", async () => {
   // Aave V3's real shape: a proxy whose upgrade authority lives in external
   // governance. Absence of an admin here is not proof nobody can upgrade.
-  const findings = await new MutableLogicRule().evaluate(
+  const findings = await findingsOf(new MutableLogicRule(), 
     context({ storage: { [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL) } }),
   );
 

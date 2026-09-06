@@ -142,7 +142,8 @@ Three, and two are outside this repo:
 
 | | |
 |---|---|
-| **`Ledger Sync` app on the device** | The trusted app the protocol opens. Installed by enabling Ledger Sync in Ledger Live; not resolvable in the public app catalogue. Its absence surfaces as device error `6807`. |
+| **`Ledger Sync` app on the device** | The trusted app the protocol opens. Its absence surfaces as device error `6807`. |
+| **An initialised trustchain** | Installing the app is **not** sufficient. Ledger Sync must be set up in Ledger Live with this device, which is what creates the trustchain. Until then authentication reaches `lkrp.steps.authenticate` and stops. |
 | **Ledger's trustchain backend** | `https://trustchain.api.live.ledger.com/v1`. The trustchain is not local. |
 | **An `applicationId`** | Separates this application's derived keys from others' in the trustchain. |
 
@@ -155,7 +156,12 @@ here.
 
 Implemented and unit-tested against an injected protocol; the encryption
 round-trip, the vault format, and both device error paths are covered.
-**Not yet verified against hardware** — the device used for development has no
-`Ledger Sync` app, and the authenticate flow stops at `6807`. Everything up to
-that point is confirmed live: the device unlocks, the protocol builds, and the
-action reaches `lkrp.steps.openApp` with `confirm-open-app`.
+**Not yet verified end to end against hardware.** Confirmed live so far: the
+device unlocks, the protocol builds, the `Ledger Sync` app opens, and the
+action reaches `lkrp.steps.authenticate`. It then stops because no trustchain
+exists for the device yet — Ledger Sync has to be initialised in Ledger Live,
+which is a separate step from installing the app.
+
+Each of the three device-side states is translated into its own error code with
+the specific remedy, since they need different actions and only the last is a
+fault: `device_locked`, `device_app_missing`, `trustchain_not_initialized`.

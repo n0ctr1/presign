@@ -177,6 +177,20 @@ function translateError(error: {
   message?: string;
   _tag?: string;
 }): KeyRingError {
+  /*
+   * Three device-side states, each needing a different action from a human,
+   * and only the third is a fault. Collapsing them into "device error" would
+   * send an operator to the wrong place every time.
+   */
+  if (error.message?.includes("must be initialized from Ledger Live") === true) {
+    return new KeyRingError(
+      "trustchain_not_initialized",
+      `the "${REQUIRED_DEVICE_APP}" app is installed but no trustchain exists for ` +
+        "this device. Initialise Ledger Sync in Ledger Live with this device " +
+        "connected, which creates the trustchain, then retry. Installing the app " +
+        "alone is not sufficient.",
+    );
+  }
   if (error.errorCode === "6807") {
     return new KeyRingError(
       "device_app_missing",

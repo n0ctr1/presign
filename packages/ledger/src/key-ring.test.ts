@@ -78,6 +78,32 @@ test("a missing trusted app is reported as a missing install, not a bad name", a
   );
 });
 
+test("an uninitialised trustchain is distinguished from a missing app", async () => {
+  const protocol = xorProtocol([
+    {
+      status: "error",
+      error: {
+        _tag: "LedgerKeyringProtocolError",
+        message: "Ledger Sync must be initialized from Ledger Live with this device.",
+      },
+    },
+  ]);
+
+  await assert.rejects(
+    () => runAuthenticate(protocol, authInput),
+    (error: unknown) => {
+      assert.ok(error instanceof KeyRingError);
+      // Installing the app and initialising the trustchain are separate steps,
+      // and confusing them sends someone back to the Manager instead of to
+      // Ledger Sync setup. Observed live: the app opened, then this.
+      assert.equal(error.code, "trustchain_not_initialized");
+      assert.match(error.message, /Initialise Ledger Sync in Ledger Live/);
+      assert.match(error.message, /not sufficient/);
+      return true;
+    },
+  );
+});
+
 test("a locked device is reported as locked, with the remedy", async () => {
   const protocol = xorProtocol([
     { status: "error", error: { _tag: "DeviceLockedError" } },

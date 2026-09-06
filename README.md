@@ -107,7 +107,7 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Capability binding + warm cache | done — verified against live mainnet |
 | MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
 | Fork simulation + rules R1-R3 | done — verified against live mainnet fork |
-| Ledger DMK escalation, Key Ring source | not started — device path validated (Nano X connects over DMK) |
+| Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
 | x402 (Hedera in, The Graph out) + HCS journal | not started |
 
 Measured against live mainnet on 2026-09-05: liveness 173 ms, conformance

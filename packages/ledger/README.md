@@ -154,14 +154,46 @@ here.
 
 ## Status
 
-Implemented and unit-tested against an injected protocol; the encryption
-round-trip, the vault format, and both device error paths are covered.
-**Not yet verified end to end against hardware.** Confirmed live so far: the
-device unlocks, the protocol builds, the `Ledger Sync` app opens, and the
-action reaches `lkrp.steps.authenticate`. It then stops because no trustchain
-exists for the device yet — Ledger Sync has to be initialised in Ledger Live,
-which is a separate step from installing the app.
+**Verified end to end on a Nano X.** One device confirmation adds the client to
+the trustchain, after which the Studio key is encrypted, stored and read back
+with no further device interaction:
+
+```
+[device] openApp → authenticate → getTrustchain → lkrp-add-member
+         → extractEncryptionKey
+
+protection: hardware
+vault contains plaintext key? no
+round-trip matches original? YES
+resolver -> source=ledger-key-ring protection=hardware
+```
+
+The last line is the one that matters: resolved through `SecretResolver` with
+`minimumProtection: "hardware"`, so a deployment configured that way takes the
+key from the device or fails to start — it cannot silently fall back to a
+dotfile.
 
 Each of the three device-side states is translated into its own error code with
 the specific remedy, since they need different actions and only the last is a
 fault: `device_locked`, `device_app_missing`, `trustchain_not_initialized`.
+
+### Vault format
+
+```json
+{
+  "version": 1,
+  "trustchainId": "003a0e1419aa896e…",
+  "applicationPath": "m/0'/16'/0'",
+  "secrets": { "the-graph/studio-api-key": "AAKGOrHlKfSdu9o6…" }
+}
+```
+
+Written `0600`. The `applicationPath` shows the trustchain deriving a branch
+per application id, so keys held by this project stay separate from those of
+anything else sharing the device.
+
+### On `applicationId`
+
+`16` is used and works, but it was a guess. Ledger presumably assigns these,
+and colliding with another application's id would put our keys in its branch.
+Worth confirming before anyone relies on this outside a demo.

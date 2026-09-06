@@ -183,3 +183,83 @@ a readable detail, and nothing hung.
 **Suggestion:** distinguish the two cases in the message, e.g. `application
 "Ethereum" is not installed on this device`. The device already knows which
 apps it has.
+
+---
+
+## 2026-09-06 — `device-transport-kit-node-hid` does not filter HID interfaces on Linux
+
+**Doing:** the first live signing run with the Ethereum app installed.
+
+**Found:** every attempt failed with `ReceiverApduError` before reaching the
+device screen. The cause is in the transport's own device filter, from its
+compiled source with `b = 65440` (`0xFFA0`):
+
+```js
+vendorId !== LEDGER_VENDOR_ID ? false
+  : (platform === "darwin" || platform === "win32") ? usagePage === b
+  : true
+```
+
+On Linux the usage-page check is skipped and **every** Ledger HID interface is
+accepted. A Nano X with U2F enabled exposes two:
+
+```
+/dev/hidraw1  interface 0  usagePage 0xffa0   <- APDU
+/dev/hidraw2  interface 2  usagePage 0xf1d0   <- FIDO
+```
+
+The FIDO interface cannot carry APDU, so whichever the transport happens to
+pick decides whether anything works. The shipped tests cover this case for
+darwin and win32 — *"should ignore non-APDU ledger interfaces on darwin"* — but
+there is no Linux equivalent.
+
+The device was fine throughout. A raw APDU written to `/dev/hidraw1` answered
+immediately:
+
+```
+status word: 9000, running app: BOLOS 2.7.1
+```
+
+**Impact:** high, and expensive to diagnose. `ReceiverApduError` carries no
+indication of which interface was used, so it reads as a device or permissions
+problem. We checked udev rules, replugged, and confirmed the device over raw
+HID before finding the filter. On a machine where U2F is disabled there is only
+one interface and everything works — by luck, not by design.
+
+**Suggestion:** apply the same `usagePage === 0xFFA0` filter on Linux. node-hid
+reports usage pages correctly there — the values above are its own output. If
+the exemption exists because some older kernels reported `0`, then filter only
+when the value is present rather than skipping the check wholesale. Adding the
+existing darwin/win32 test case for linux would have caught this.
+
+**Workaround:** we filter `devicesAsync` before the transport is loaded. Note
+that patching afterwards does not work: the transport captures the function at
+import time (`const w = { devicesAsync: g.devicesAsync, HIDAsync: g.HIDAsync }`),
+so the shim has to be installed before the module is required.
+
+---
+
+## 2026-09-06 — `detectBlindSigning` and `blindSignTransactionFallback` are easy to confuse
+
+**Doing:** reporting whether a confirmation was clear-signed.
+
+**Found:** a successful clear-signed ERC-20 approval emits this step sequence:
+
+```
+openApp, getAppConfig, parseTransaction, getAddress,
+buildContexts, provideContexts, signTransaction, detectBlindSigning
+```
+
+`detectBlindSigning` runs on **every** signature — it is the check, not the
+outcome. The fallback is a separate step, `blindSignTransactionFallback`. Our
+first implementation searched the step list for "blind" and therefore reported
+every transaction as blind-signed, including ones the device decoded fully.
+
+**Impact:** ours to fix, and we did. Flagging it because the naming invites the
+mistake, and the mistake is silent: the flag reads plausible and is simply
+always wrong in one direction.
+
+**Suggestion:** either name the check something without "blind" in it, or
+surface the outcome directly on the completed state — a
+`clearSigningType`/`wasBlindSigned` field on the output would remove the need
+for callers to infer it from a step list at all. The signer already knows.

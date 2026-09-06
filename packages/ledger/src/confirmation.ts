@@ -56,11 +56,25 @@ export type ConfirmationResult =
       readonly approved: false;
       readonly reason:
         | "rejected_on_device"
+        | "cancelled"
         | "not_escalated"
         | "device_error"
         | "timeout";
       readonly detail: string;
     };
+
+/**
+ * The step the signer emits when it gives up on decoding and falls back to
+ * signing an opaque hash.
+ *
+ * Matched exactly rather than by searching for "blind". The signer also emits
+ * `detectBlindSigning`, which is the *check* and runs on every signature, so a
+ * substring match reports every transaction as blind-signed — including ones
+ * the device decoded perfectly. That is a false claim in the direction that
+ * matters least safely: it understates a real confirmation, and a caller
+ * taught to ignore the flag would then also ignore it when it is true.
+ */
+const BLIND_SIGN_FALLBACK_STEP = "signer.eth.steps.blindSignTransactionFallback";
 
 /** Default BIP-44 path for the first Ethereum account. */
 export const DEFAULT_DERIVATION_PATH = "44'/60'/0'/0/0";
@@ -208,19 +222,28 @@ export class DeviceConfirmation {
             finish({
               approved: true,
               signature: output,
-              // The device reports a blind-signing fallback as its own step.
-              // If it appears, the human approved a hash, not a transaction.
-              clearSigned: !steps.some((step) => /blind/i.test(step)),
+              // If the fallback step appears, the human approved a hash
+              // rather than a decoded transaction.
+              clearSigned: !steps.includes(BLIND_SIGN_FALLBACK_STEP),
               steps,
             });
             return;
           }
 
           if (status === DeviceActionStatus.Stopped) {
+            /*
+             * Stopped means the device action was halted, which is not the
+             * same as a person pressing reject. An earlier version reported it
+             * as a decline, and a transport fault then surfaced as "the human
+             * refused" — a service built on the honesty of its verdicts must
+             * not invent a human decision that never happened. A real
+             * rejection arrives as an Error carrying status word 0x6985 and is
+             * handled below.
+             */
             finish({
               approved: false,
-              reason: "rejected_on_device",
-              detail: "the transaction was declined on the device",
+              reason: "cancelled",
+              detail: "the device action stopped before the transaction was signed",
             });
             return;
           }

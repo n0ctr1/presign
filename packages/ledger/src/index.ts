@@ -22,3 +22,5 @@ export type {
   SignableTransaction,
   TransactionSigner,
 } from "./confirmation.js";
+
+export { applyLedgerHidFilter } from "./hid-filter.js";

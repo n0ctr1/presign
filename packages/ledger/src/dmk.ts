@@ -20,6 +20,7 @@
 
 import { createRequire } from "node:module";
 
+import { applyLedgerHidFilter } from "./hid-filter.js";
 import type {
   DeviceManagementKit,
   DeviceActionState,
@@ -54,6 +55,21 @@ interface SignerModule {
     originToken?: string;
   }) => { build(): SignerEth };
 }
+
+/*
+ * Order matters, and the reason is not obvious.
+ *
+ * The node-hid transport captures its device-listing function into a
+ * module-scope object the moment it is required:
+ *
+ *     const w = { devicesAsync: g.devicesAsync, HIDAsync: g.HIDAsync };
+ *
+ * Patching `node-hid` afterwards therefore changes nothing — the transport
+ * already holds the original reference. The filter has to be installed before
+ * the transport module is loaded, which is why this call sits above the
+ * require rather than inside connect().
+ */
+applyLedgerHidFilter();
 
 export const dmkModule = require("@ledgerhq/device-management-kit") as DmkModule;
 export const transportModule = require(

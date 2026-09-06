@@ -121,13 +121,40 @@ test("reports a blind-signing fallback rather than tolerating it", async () => {
   assert.equal(result.clearSigned, false);
 });
 
-test("a decline on the device is not an error", async () => {
+test("the blind-signing *check* is not mistaken for the fallback", async () => {
+  // Exact step sequence recorded from a Nano X signing an ERC-20 approval.
+  // detectBlindSigning runs on every signature, so a substring match on
+  // "blind" reported every transaction as blind-signed — including this one,
+  // which the device decoded. Caught only by running against hardware.
+  const result = await confirmation(
+    scriptedSigner([
+      pending("signer.eth.steps.openApp"),
+      pending("signer.eth.steps.getAppConfig"),
+      pending("signer.eth.steps.parseTransaction"),
+      pending("signer.eth.steps.getAddress"),
+      pending("signer.eth.steps.buildContexts"),
+      pending("signer.eth.steps.provideContexts"),
+      pending("signer.eth.steps.signTransaction"),
+      pending("signer.eth.steps.detectBlindSigning"),
+      { status: "completed", output: SIGNATURE },
+    ]),
+  ).request(transaction, verdict("medium"));
+
+  assert.ok(result.approved);
+  assert.equal(result.clearSigned, true);
+});
+
+test("a stopped action is not reported as a human decision", async () => {
   const result = await confirmation(
     scriptedSigner([pending("signer.eth.steps.signTransaction"), { status: "stopped" }]),
   ).request(transaction, verdict("medium"));
 
   assert.ok(!result.approved);
-  assert.equal(result.reason, "rejected_on_device");
+  // Stopped means the action halted, which is not someone pressing reject.
+  // Reporting it as a decline invents a human decision that never happened —
+  // and that is exactly what masked a real transport fault during the first
+  // live run against hardware.
+  assert.equal(result.reason, "cancelled");
 });
 
 test("an app rejection status word is read as a decline, not a fault", async () => {

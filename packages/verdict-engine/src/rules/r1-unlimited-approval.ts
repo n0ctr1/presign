@@ -128,6 +128,9 @@ export class UnlimitedApprovalRule implements Rule {
         findings.push({
           ruleId: this.id,
           severity: flagged ? "critical" : "warning",
+          // This transaction grants the allowance; it is not a pre-existing
+          // property of the counterparty.
+          standing: false,
           title: flagged
             ? "Unlimited approval to an address linked to a known incident"
             : "Unlimited token approval to an unrecognised spender",

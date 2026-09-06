@@ -23,14 +23,21 @@ import {
   R3_LENDING,
   R3_VAULT,
   effectiveLagSeconds,
-  type CapabilityResolution,
+  type DeploymentCandidate,
+  type DeploymentRecord,
   type NetworkId,
   type RuleRequirement,
-  type SchemaFamily,
 } from "@presign/operational-layer";
 
 import { evaluated } from "../types.js";
-import type { Address, Finding, Rule, RuleContext, RuleOutcome } from "../types.js";
+import type {
+  Address,
+  Finding,
+  Rule,
+  RuleContext,
+  RuleOutcome,
+  VerdictSource,
+} from "../types.js";
 
 /** EIP-155 chain id to the graph-node network name the corpus is keyed by. */
 export const CHAIN_TO_NETWORK: Readonly<Record<number, NetworkId>> = {
@@ -221,16 +228,17 @@ const SPECS: Readonly<Record<string, InvariantSpec>> = {
  * rule can be tested without a gateway, a registry or a network.
  */
 export interface ProtocolContext {
-  /** Which schema family indexes this contract, if any. */
-  identifyFamily(
+  /** Deployments whose manifest indexes this contract. */
+  findIndexingDeployments(
     address: Address,
     network: NetworkId,
-  ): Promise<SchemaFamily | null>;
-  /** Which deployments can serve R3 for this family right now. */
-  resolveCapability(
+  ): Promise<readonly DeploymentCandidate[]>;
+  /** Conformance and liveness for one deployment against one requirement. */
+  probeDeployment(
+    candidate: DeploymentCandidate,
     requirement: RuleRequirement,
     network: NetworkId,
-  ): Promise<CapabilityResolution>;
+  ): Promise<DeploymentRecord | null>;
   /** Execute a query against a pinned deployment. */
   query<T>(deploymentId: string, query: string): Promise<T>;
 }
@@ -267,6 +275,13 @@ export class InvariantBreachRule implements Rule {
     this.#now = options.now ?? (() => new Date());
   }
 
+  /** The spec's requirement, with any caller override of the freshness budget. */
+  #requirementFor(spec: InvariantSpec): RuleRequirement {
+    return this.#maxLagSeconds === null
+      ? spec.requirement
+      : { ...spec.requirement, maxLagSeconds: this.#maxLagSeconds };
+  }
+
   async evaluate(context: RuleContext): Promise<RuleOutcome> {
     const { transaction } = context;
     if (transaction.to === null) return evaluated([]);
@@ -281,44 +296,87 @@ export class InvariantBreachRule implements Rule {
     }
 
     const target = transaction.to.toLowerCase() as Address;
-    const family = await this.#protocol.identifyFamily(target, network);
 
-    // Not a protocol this rule knows how to reason about. That is not a
-    // failure of R3 — the "unidentified counterparty" case is the engine's to
-    // report, and duplicating it here would double-count one fact.
-    if (family === null) return evaluated([]);
+    /*
+     * Source selection is the subtle part, and getting it wrong is a category
+     * error rather than a small inaccuracy.
+     *
+     * Appearing in a subgraph's manifest does not make a contract an instance
+     * of that subgraph's protocol. USDC is indexed by Hop's and SOMA's
+     * subgraphs; treating it as "a DEX" on that basis and then checking pool
+     * invariants against it is nonsense. So the protocol context is the
+     * deployment that indexes this very contract, and it only counts if it
+     * actually speaks the standard schema.
+     *
+     * Conformance and liveness are then read as answers to different
+     * questions, and the split is what keeps this honest. Conformance asks
+     * *what this counterparty is*: a deployment that claims a family but
+     * cannot answer its fields tells us the classification is unreliable, and
+     * R3 has nothing to say. Liveness asks *whether we can see it right now*:
+     * a conforming deployment that is stale is a protocol we should be able to
+     * check and currently cannot, which is the fail-closed case.
+     */
+    const indexing = await this.#protocol.findIndexingDeployments(target, network);
 
-    const spec = SPECS[family];
-    if (spec === undefined) return evaluated([]);
+    const specced = indexing.flatMap((candidate) => {
+      const family = candidate.schemaFamily;
+      if (family === null) return [];
+      const spec = SPECS[family];
+      return spec === undefined ? [] : [{ candidate, spec, family }];
+    });
 
-    const requirement: RuleRequirement =
-      this.#maxLagSeconds === null
-        ? spec.requirement
-        : { ...spec.requirement, maxLagSeconds: this.#maxLagSeconds };
+    if (specced.length === 0) return evaluated([]);
 
-    const resolution = await this.#protocol.resolveCapability(requirement, network);
+    const probed = await Promise.all(
+      specced.map(async (entry) => ({
+        ...entry,
+        record: await this.#protocol.probeDeployment(
+          entry.candidate,
+          this.#requirementFor(entry.spec),
+          network,
+        ),
+      })),
+    );
 
-    // The fail-closed core. Stale or missing context cannot produce a clean
-    // result, only an honest refusal to answer.
-    if (!resolution.satisfied) {
+    const conforming = probed.filter(
+      (
+        entry,
+      ): entry is (typeof probed)[number] & { record: DeploymentRecord } =>
+        entry.record !== null &&
+        entry.record.conformance.missingFields.length === 0 &&
+        !entry.record.liveness.hasIndexingErrors,
+    );
+
+    // Nothing that indexes this contract speaks a schema we can reason about,
+    // so the counterparty is not a protocol instance R3 evaluates. R1, R2 and
+    // the unidentified-contract class carry the verdict from here.
+    if (conforming.length === 0) return evaluated([]);
+
+    const now = this.#now();
+    const fresh = conforming
+      .map((entry) => ({ ...entry, lag: effectiveLagSeconds(entry.record, now) }))
+      .filter(
+        (entry) => entry.lag <= this.#requirementFor(entry.spec).maxLagSeconds,
+      )
+      .sort((a, b) => a.lag - b.lag);
+
+    if (fresh.length === 0) {
+      const budget = this.#requirementFor(conforming[0]!.spec).maxLagSeconds;
       return {
         status: "unavailable",
-        reason: resolution.reason,
+        reason: "all_candidates_stale",
         detail:
-          `No deployment can currently answer R3 for ${family} on ${network} ` +
-          `within ${requirement.maxLagSeconds}s of chain head ` +
-          `(${resolution.rejected.length} candidate(s) rejected).`,
+          `${conforming.length} deployment(s) index ${target} and speak the ` +
+          `${conforming[0]!.family} schema, but none is within ${budget}s of chain ` +
+          "head, so no current view of this protocol's accounting is available.",
       };
     }
 
-    const record = resolution.records[0];
-    if (record === undefined) {
-      return {
-        status: "unavailable",
-        reason: "no_candidates",
-        detail: `capability reported satisfied with no deployments for ${family}`,
-      };
-    }
+    const chosen = fresh[0]!;
+    const spec = chosen.spec;
+    const family = chosen.family;
+    const record = chosen.record;
+    const requirement = this.#requirementFor(spec);
 
     const query = `{ ${requirement.rootField}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${spec.fields.join(" ")} } }`;
 
@@ -339,7 +397,7 @@ export class InvariantBreachRule implements Rule {
       };
     }
 
-    const lagSeconds = Number(effectiveLagSeconds(record, this.#now()).toFixed(1));
+    const lagSeconds = Number(chosen.lag.toFixed(1));
     const findings: Finding[] = [];
 
     for (const entity of entities) {
@@ -347,6 +405,7 @@ export class InvariantBreachRule implements Rule {
         findings.push({
           ruleId: this.id,
           severity: "critical",
+          standing: true,
           title: `Protocol accounting is inconsistent: ${breach.entityName}`,
           detail: breach.detail,
           evidence: {
@@ -368,6 +427,16 @@ export class InvariantBreachRule implements Rule {
       }
     }
 
-    return evaluated(findings);
+    const source: VerdictSource = {
+      deploymentId: record.candidate.deploymentId,
+      displayName: record.candidate.displayName,
+      effectiveLagSeconds: lagSeconds,
+      measuredAt: record.liveness.checkedAt.toISOString(),
+    };
+
+    // Reported whether or not anything was found: a clean R3 result is a claim
+    // about a specific deployment at a specific staleness, and without naming
+    // it the "no breach" half of the verdict is unfalsifiable.
+    return evaluated(findings, [source]);
   }
 }

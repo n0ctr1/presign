@@ -9,86 +9,105 @@
  */
 
 import type {
-  CapabilityIndex,
-  CapabilityResolution,
+  ConformanceChecker,
+  DeploymentCandidate,
+  DeploymentRecord,
   DiscoverySource,
   GatewayClient,
+  LivenessChecker,
   NetworkId,
   RuleRequirement,
-  SchemaFamily,
 } from "@presign/operational-layer";
 
 import type { Address } from "../types.js";
 import type { ProtocolContext } from "../rules/r3-invariant-breach.js";
 
+interface CachedProbe {
+  readonly record: DeploymentRecord | null;
+  readonly probedAt: Date;
+}
+
 export interface OperationalProtocolContextOptions {
   readonly discovery: DiscoverySource;
-  readonly index: CapabilityIndex;
+  readonly conformance: ConformanceChecker;
+  readonly liveness: LivenessChecker;
   readonly gateway: GatewayClient;
   /**
-   * Re-warm when the cached probe is older than this.
+   * How long a probe result may be reused.
    *
-   * The capability index already ages cached measurements, so a stale entry
-   * fails the budget rather than passing silently. This only decides when to
-   * spend queries refreshing it, which is a cost question, not a safety one.
+   * Only a cost control, never a safety one: R3 compares the *effective* lag,
+   * which already grows with the age of the measurement, so a cached probe
+   * that has gone stale fails the budget rather than passing quietly. This
+   * merely decides when to spend gateway quota refreshing it.
    */
-  readonly rewarmAfterSeconds?: number;
+  readonly probeTtlSeconds?: number;
   readonly now?: () => Date;
 }
 
 export class OperationalProtocolContext implements ProtocolContext {
   readonly #discovery: DiscoverySource;
-  readonly #index: CapabilityIndex;
+  readonly #conformance: ConformanceChecker;
+  readonly #liveness: LivenessChecker;
   readonly #gateway: GatewayClient;
-  readonly #rewarmAfterSeconds: number;
+  readonly #probeTtlSeconds: number;
   readonly #now: () => Date;
+  readonly #probes = new Map<string, CachedProbe>();
 
   constructor(options: OperationalProtocolContextOptions) {
     this.#discovery = options.discovery;
-    this.#index = options.index;
+    this.#conformance = options.conformance;
+    this.#liveness = options.liveness;
     this.#gateway = options.gateway;
-    this.#rewarmAfterSeconds = options.rewarmAfterSeconds ?? 15;
+    this.#probeTtlSeconds = options.probeTtlSeconds ?? 10;
     this.#now = options.now ?? (() => new Date());
   }
 
-  /**
-   * Which schema family indexes this contract.
-   *
-   * Candidates are ranked by the registry's economic score, which says nothing
-   * about classification quality, so the first row with a family we recognise
-   * wins rather than the first row overall — a highly-ranked but unclassified
-   * subgraph should not shadow a correctly classified one behind it.
-   */
-  async identifyFamily(
+  findIndexingDeployments(
     address: Address,
     network: NetworkId,
-  ): Promise<SchemaFamily | null> {
-    const candidates = await this.#discovery.findByContract(address, network);
-    for (const candidate of candidates) {
-      if (candidate.schemaFamily !== null) return candidate.schemaFamily;
-    }
-    return null;
+  ): Promise<readonly DeploymentCandidate[]> {
+    return this.#discovery.findByContract(address, network);
   }
 
-  async resolveCapability(
+  /**
+   * Conformance and liveness for one deployment.
+   *
+   * Issued together, because a sequential pair would measure the schema and
+   * the chain seconds apart. A probe that throws yields null rather than
+   * propagating: one deployment refusing introspection must not deny the rule
+   * every other deployment that indexes the same contract.
+   */
+  async probeDeployment(
+    candidate: DeploymentCandidate,
     requirement: RuleRequirement,
     network: NetworkId,
-  ): Promise<CapabilityResolution> {
-    const warmedAt = this.#index.warmedAt(
-      requirement.ruleId,
-      requirement.schemaFamily,
-      network,
-    );
-
-    const ageSeconds =
-      warmedAt === null
-        ? Number.POSITIVE_INFINITY
-        : (this.#now().getTime() - warmedAt.getTime()) / 1000;
-
-    if (ageSeconds > this.#rewarmAfterSeconds) {
-      return this.#index.warm(requirement, network);
+  ): Promise<DeploymentRecord | null> {
+    const key = `${candidate.deploymentId}:${requirement.ruleId}:${requirement.schemaFamily}:${network}`;
+    const cached = this.#probes.get(key);
+    if (
+      cached !== undefined &&
+      (this.#now().getTime() - cached.probedAt.getTime()) / 1000 <=
+        this.#probeTtlSeconds
+    ) {
+      return cached.record;
     }
-    return this.#index.resolve(requirement, network);
+
+    let record: DeploymentRecord | null;
+    try {
+      const [conformance, liveness] = await Promise.all([
+        this.#conformance.check(candidate.deploymentId, {
+          rootField: requirement.rootField,
+          fields: requirement.requiredFields,
+        }),
+        this.#liveness.check(candidate.deploymentId, network),
+      ]);
+      record = { candidate, conformance, liveness };
+    } catch {
+      record = null;
+    }
+
+    this.#probes.set(key, { record, probedAt: this.#now() });
+    return record;
   }
 
   query<T>(deploymentId: string, query: string): Promise<T> {

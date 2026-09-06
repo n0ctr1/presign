@@ -20,38 +20,6 @@ const context = (transaction = tx()) =>
     call: () => Promise.resolve(null),
   }) as never;
 
-/** A satisfied capability naming one deployment 4 seconds behind head. */
-const satisfied = {
-  satisfied: true,
-  ruleId: "R3",
-  records: [
-    {
-      candidate: { deploymentId: "QmAave", displayName: "Aave V3 Ethereum" },
-      liveness: { lagSeconds: 4, checkedAt: T0, indexedBlock: 25916120 },
-      conformance: { answersFields: [], missingFields: [] },
-    },
-  ],
-};
-
-function protocolReturning(options: {
-  family?: string | null;
-  resolution?: unknown;
-  markets?: unknown[];
-  queryThrows?: string;
-}) {
-  return {
-    identifyFamily: () => Promise.resolve(options.family ?? "lending-cdp"),
-    resolveCapability: () => Promise.resolve(options.resolution ?? satisfied),
-    query: () =>
-      options.queryThrows !== undefined
-        ? Promise.reject(new Error(options.queryThrows))
-        : Promise.resolve({ markets: options.markets ?? [] }),
-  } as never;
-}
-
-const rule = (protocol: never) =>
-  new InvariantBreachRule({ protocol, now: () => T0 });
-
 const healthyMarket = {
   id: "0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8",
   name: "Aave Ethereum WETH",
@@ -61,68 +29,143 @@ const healthyMarket = {
   inputTokenBalance: "2150241868832575325029252",
 };
 
-test("stale context yields unavailable, never a clean result", async () => {
-  const outcome = await rule(
-    protocolReturning({
-      resolution: {
-        satisfied: false,
-        ruleId: "R3",
-        reason: "all_candidates_stale",
-        rejected: [{}, {}],
-      },
-    }),
-  ).evaluate(context());
+interface Setup {
+  family?: string | null;
+  missingFields?: string[];
+  lagSeconds?: number;
+  indexingErrors?: boolean;
+  probeReturnsNull?: boolean;
+  deployments?: number;
+  markets?: unknown[];
+  queryThrows?: string;
+}
 
-  // The whole point of the layer. An empty finding list here would mean
-  // "checked, looks fine" — on data nobody could obtain.
-  assert.equal(outcome.status, "unavailable");
-  assert.ok(outcome.status === "unavailable");
-  assert.equal(outcome.reason, "all_candidates_stale");
-  assert.match(outcome.detail, /2 candidate\(s\) rejected/);
-});
+function protocolWith(setup: Setup) {
+  const candidate = {
+    deploymentId: "QmAave",
+    displayName: "Aave V3 Ethereum",
+    schemaFamily: setup.family === undefined ? "lending-cdp" : setup.family,
+    network: "mainnet",
+  };
+  return {
+    findIndexingDeployments: () =>
+      Promise.resolve(Array((setup.deployments ?? 1)).fill(candidate)),
+    probeDeployment: () =>
+      Promise.resolve(
+        setup.probeReturnsNull === true
+          ? null
+          : {
+              candidate,
+              conformance: {
+                answersFields: [],
+                missingFields: setup.missingFields ?? [],
+              },
+              liveness: {
+                lagSeconds: setup.lagSeconds ?? 4,
+                checkedAt: T0,
+                indexedBlock: 25916120,
+                hasIndexingErrors: setup.indexingErrors ?? false,
+              },
+            },
+      ),
+    query: () =>
+      setup.queryThrows !== undefined
+        ? Promise.reject(new Error(setup.queryThrows))
+        : Promise.resolve({ markets: setup.markets ?? [healthyMarket] }),
+  } as never;
+}
 
-test("a failed query is unavailable, not a healthy protocol", async () => {
-  const outcome = await rule(
-    protocolReturning({ queryThrows: "gateway timeout" }),
-  ).evaluate(context());
-
-  assert.equal(outcome.status, "unavailable");
-  assert.ok(outcome.status === "unavailable");
-  assert.equal(outcome.reason, "query_failed");
-});
+const rule = (protocol: never, maxLagSeconds?: number) =>
+  new InvariantBreachRule({
+    protocol,
+    now: () => T0,
+    ...(maxLagSeconds === undefined ? {} : { maxLagSeconds }),
+  });
 
 test("an unconfigured chain is unavailable rather than silently skipped", async () => {
-  const outcome = await rule(protocolReturning({})).evaluate(
+  const outcome = await rule(protocolWith({})).evaluate(
     context(tx({ chainId: 999_999 })),
   );
 
-  assert.equal(outcome.status, "unavailable");
   assert.ok(outcome.status === "unavailable");
   assert.equal(outcome.reason, "unsupported_network");
 });
 
-test("an unidentified counterparty is not R3's to report", async () => {
-  const outcome = await rule(protocolReturning({ family: null })).evaluate(context());
+test("nothing indexes the counterparty, so R3 has nothing to say", async () => {
+  const protocol = {
+    findIndexingDeployments: () => Promise.resolve([]),
+    probeDeployment: () => Promise.resolve(null),
+    query: () => Promise.reject(new Error("unused")),
+  } as never;
 
-  // The "unknown contract" class belongs to the engine. Reporting it here too
-  // would double-count one fact.
-  assert.equal(outcome.status, "evaluated");
+  const outcome = await rule(protocol).evaluate(context());
+
   assert.ok(outcome.status === "evaluated");
   assert.deepEqual(outcome.findings, []);
 });
 
-test("a healthy protocol produces no findings", async () => {
+test("a deployment claiming a family it cannot answer is not a protocol instance", async () => {
+  // USDC's real shape: indexed by Hop's and SOMA's subgraphs, one of which is
+  // classified dex-amm. Appearing in a manifest does not make a token a DEX,
+  // and the give-away is that the deployment cannot answer the family's
+  // fields. Conformance answers "what is this", so a miss means the
+  // classification is unreliable — not that a protocol is in trouble.
   const outcome = await rule(
-    protocolReturning({ markets: [healthyMarket] }),
+    protocolWith({ family: "dex-amm", missingFields: ["inputTokenBalances"] }),
   ).evaluate(context());
 
   assert.ok(outcome.status === "evaluated");
   assert.deepEqual(outcome.findings, []);
 });
 
+test("a conforming but stale deployment is unavailable, not silently skipped", async () => {
+  // Liveness answers a different question from conformance: this *is* the
+  // protocol, and we currently cannot see it. That is the fail-closed case.
+  const outcome = await rule(protocolWith({ lagSeconds: 4000 })).evaluate(context());
+
+  assert.ok(outcome.status === "unavailable");
+  assert.equal(outcome.reason, "all_candidates_stale");
+  assert.match(outcome.detail, /lending-cdp schema/);
+});
+
+test("a caller-tightened budget makes a fresh deployment stale, and says so", async () => {
+  const outcome = await rule(protocolWith({ lagSeconds: 4 }), 1).evaluate(context());
+
+  assert.ok(outcome.status === "unavailable");
+  // The diagnostic must quote the budget actually enforced, or it sends an
+  // operator looking for the wrong problem.
+  assert.match(outcome.detail, /within 1s of chain head/);
+});
+
+test("a deployment reporting indexing errors is not used", async () => {
+  const outcome = await rule(protocolWith({ indexingErrors: true })).evaluate(context());
+
+  assert.ok(outcome.status === "evaluated");
+  assert.deepEqual(outcome.findings, []);
+});
+
+test("a failed query is unavailable, not a healthy protocol", async () => {
+  const outcome = await rule(
+    protocolWith({ queryThrows: "gateway timeout" }),
+  ).evaluate(context());
+
+  assert.ok(outcome.status === "unavailable");
+  assert.equal(outcome.reason, "query_failed");
+});
+
+test("a healthy protocol yields no findings but still names its source", async () => {
+  const outcome = await rule(protocolWith({})).evaluate(context());
+
+  assert.ok(outcome.status === "evaluated");
+  assert.deepEqual(outcome.findings, []);
+  // Without this, the "no breach" half of a verdict is unfalsifiable.
+  assert.equal(outcome.sources?.[0]?.deploymentId, "QmAave");
+  assert.equal(outcome.sources?.[0]?.effectiveLagSeconds, 4);
+});
+
 test("borrows exceeding deposits is a breach, with provenance attached", async () => {
   const outcome = await rule(
-    protocolReturning({
+    protocolWith({
       markets: [
         { ...healthyMarket, totalDepositBalanceUSD: "1000", totalBorrowBalanceUSD: "1500" },
       ],
@@ -134,18 +177,13 @@ test("borrows exceeding deposits is a breach, with provenance attached", async (
   const [finding] = outcome.findings;
   assert.equal(finding?.severity, "critical");
   assert.equal(finding?.evidence["check"], "borrows_within_deposits");
-  // A breach claim is only checkable if the reader knows who said so and how
-  // stale they were.
   assert.equal(finding?.evidence["deployment_id"], "QmAave");
   assert.equal(finding?.evidence["effective_lag_seconds"], 4);
-  assert.equal(finding?.evidence["derived_from"], "indexed_protocol_data");
 });
 
 test("a negative balance is a breach no accounting can produce", async () => {
   const outcome = await rule(
-    protocolReturning({
-      markets: [{ ...healthyMarket, totalValueLockedUSD: "-1" }],
-    }),
+    protocolWith({ markets: [{ ...healthyMarket, totalValueLockedUSD: "-1" }] }),
   ).evaluate(context());
 
   assert.ok(outcome.status === "evaluated");
@@ -154,21 +192,16 @@ test("a negative balance is a breach no accounting can produce", async () => {
 
 test("value locked with no underlying balance is a breach", async () => {
   const outcome = await rule(
-    protocolReturning({
-      markets: [{ ...healthyMarket, inputTokenBalance: "0" }],
-    }),
+    protocolWith({ markets: [{ ...healthyMarket, inputTokenBalance: "0" }] }),
   ).evaluate(context());
 
   assert.ok(outcome.status === "evaluated");
-  assert.equal(
-    outcome.findings[0]?.evidence["check"],
-    "value_backed_by_balance",
-  );
+  assert.equal(outcome.findings[0]?.evidence["check"], "value_backed_by_balance");
 });
 
 test("high utilisation alone is not a breach", async () => {
   const outcome = await rule(
-    protocolReturning({
+    protocolWith({
       markets: [
         // 99.9% utilised: alarming to a human, entirely possible, and firing
         // here would flag healthy markets during ordinary demand spikes.

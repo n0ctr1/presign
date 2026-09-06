@@ -19,6 +19,7 @@ export type {
   UnsignedTransaction,
   Verdict,
   VerdictProvenance,
+  VerdictSource,
 } from "./types.js";
 
 export { evaluated, TIER_ACTION } from "./types.js";
@@ -55,3 +56,10 @@ export {
   OperationalProtocolContext,
   type OperationalProtocolContextOptions,
 } from "./protocol/operational-context.js";
+
+export {
+  DEFAULT_TIER_POLICY,
+  VerdictEngine,
+  type TierPolicy,
+  type VerdictEngineOptions,
+} from "./engine.js";

@@ -130,6 +130,8 @@ export class MutableLogicRule implements Rule {
       findings.push({
         ruleId: this.id,
         severity: "critical",
+        // About this call, not about the counterparty in general.
+        standing: false,
         title: "This transaction replaces the contract's implementation",
         detail:
           `The implementation slot ${upgrade.slot} of ${address} is written by this ` +
@@ -151,6 +153,7 @@ export class MutableLogicRule implements Rule {
       findings.push({
         ruleId: this.id,
         severity: "info",
+        standing: true,
         title: "Contract is upgradeable, controller not visible on-chain here",
         detail:
           `${address} is a ${proxy.standard} proxy delegating to ` +
@@ -174,6 +177,9 @@ export class MutableLogicRule implements Rule {
     findings.push({
       ruleId: this.id,
       severity: control.severity,
+      // True of every call to this contract, so it cannot by itself be the
+      // reason to refuse this one.
+      standing: true,
       title: control.title,
       detail:
         `${address} is a ${proxy.standard} proxy delegating to ${proxy.implementation}. ` +

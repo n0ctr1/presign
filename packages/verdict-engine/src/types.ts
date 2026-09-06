@@ -51,6 +51,18 @@ export type Severity = "info" | "warning" | "critical";
  */
 export interface Finding {
   readonly ruleId: string;
+  /**
+   * True when the finding describes a standing property of the counterparty
+   * rather than something this transaction does.
+   *
+   * The distinction drives tiering. "This contract is upgradeable" is true of
+   * every call to it and cannot be the reason to refuse this one; "this
+   * transaction replaces the implementation" is about the call under
+   * judgement. Collapsing the two either cries wolf on every interaction with
+   * an ordinary proxy, or lets a live upgrade slip through at the same tier as
+   * a dormant one.
+   */
+  readonly standing?: boolean;
   readonly severity: Severity;
   /** One line, safe to show a human on a device screen. */
   readonly title: string;
@@ -73,12 +85,7 @@ export interface VerdictProvenance {
   /** Chain the fork was taken from. */
   readonly chainId: number;
   /** Indexed sources consulted, with their lag at the time of use. */
-  readonly sources: readonly {
-    readonly deploymentId: string;
-    readonly displayName: string;
-    readonly effectiveLagSeconds: number;
-    readonly measuredAt: string;
-  }[];
+  readonly sources: readonly VerdictSource[];
   /** Rules that could not run, and why. Empty is meaningful. */
   readonly unavailableRules: readonly {
     readonly ruleId: string;
@@ -150,8 +157,25 @@ export interface RuleContext {
  * no way to tell them apart — which is exactly how a green verdict gets issued
  * on absent data.
  */
+export interface VerdictSource {
+  readonly deploymentId: string;
+  readonly displayName: string;
+  readonly effectiveLagSeconds: number;
+  readonly measuredAt: string;
+}
+
 export type RuleOutcome =
-  | { readonly status: "evaluated"; readonly findings: readonly Finding[] }
+  | {
+      readonly status: "evaluated";
+      readonly findings: readonly Finding[];
+      /**
+       * Indexed sources the rule consulted, reported even when nothing was
+       * found. A clean verdict has to name what it rested on: "no problems"
+       * and "no problems, according to a deployment four seconds behind head"
+       * are different claims, and only the second can be checked.
+       */
+      readonly sources?: readonly VerdictSource[];
+    }
   | {
       readonly status: "unavailable";
       /** Machine-readable cause, e.g. `all_candidates_stale`. */
@@ -167,6 +191,11 @@ export interface Rule {
 }
 
 /** Convenience for rules that always reach a conclusion. */
-export function evaluated(findings: readonly Finding[]): RuleOutcome {
-  return { status: "evaluated", findings };
+export function evaluated(
+  findings: readonly Finding[],
+  sources?: readonly VerdictSource[],
+): RuleOutcome {
+  return sources === undefined
+    ? { status: "evaluated", findings }
+    : { status: "evaluated", findings, sources };
 }

@@ -1,0 +1,25 @@
+{
+  "name": "@presign/verdict-engine",
+  "version": "0.0.1",
+  "description": "Pre-signature risk verdict from a simulated state diff, with data provenance and fail-closed behaviour on stale context.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@presign/operational-layer": "0.0.1",
+    "viem": "2.56.3"
+  }
+}

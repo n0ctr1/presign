@@ -24,3 +24,16 @@ export type {
 } from "./confirmation.js";
 
 export { applyLedgerHidFilter } from "./hid-filter.js";
+
+export {
+  LedgerKeyRingSecretSource,
+  KeyRingError,
+  REQUIRED_DEVICE_APP,
+  runAuthenticate,
+} from "./key-ring.js";
+export type {
+  AuthenticatedSession,
+  KeyRingProtocol,
+  UnlockOptions,
+  VaultFile,
+} from "./key-ring.js";

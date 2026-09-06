@@ -94,3 +94,68 @@ values are required. Reported in
 See [`docs/setup/ledger.md`](../../docs/setup/ledger.md). A freshly attached
 Ledger is `root:root` mode `0600` and unreachable until udev rules are
 installed.
+
+---
+
+# Key Ring: the Studio key without a `.env` file
+
+The second Ledger primitive. The device authenticates this client into a
+trustchain and returns an encryption key; secrets are encrypted with it and
+only ciphertext is written to disk.
+
+```ts
+const source = await LedgerKeyRingSecretSource.unlock({ device, vaultPath });
+await source.store({ scope: "the-graph", name: "studio-api-key" }, key);
+
+// Later, same process, no device interaction:
+const { value } = await resolver.resolve({ scope: "the-graph", name: "studio-api-key" });
+```
+
+Chain it ahead of the file and env sources, and a deployment can demand
+`minimumProtection: "hardware"` and fail at startup rather than quietly falling
+back to a dotfile.
+
+## What this guarantees, stated precisely
+
+The tempting summary is stronger than the truth, so:
+
+**What holds.** The Studio key never exists in plaintext on disk — there is a
+test asserting the vault file does not contain it. Trustchain membership is
+revocable from the device, and revoking it makes existing ciphertext
+undecryptable. Neither property holds for a `.env` file.
+
+**What does not.** The encryption key is in process memory after unlock, so
+anything that can read this process can read it. That is precisely why it is
+never persisted: writing a member key to disk would let anyone with the
+filesystem reconstruct the encryption key at will, which is `process`
+protection wearing a hardware label. One device touch per process start is the
+price of the stronger claim.
+
+The protocol's types permit a fully headless path — `authenticate` accepts a
+`trustchainId` instead of a device session — but taking it would mean storing a
+member private key locally, and `protection: "hardware"` would then be a
+misstatement. We chose the touch.
+
+## Requirements
+
+Three, and two are outside this repo:
+
+| | |
+|---|---|
+| **`Ledger Sync` app on the device** | The trusted app the protocol opens. Installed by enabling Ledger Sync in Ledger Live; not resolvable in the public app catalogue. Its absence surfaces as device error `6807`. |
+| **Ledger's trustchain backend** | `https://trustchain.api.live.ledger.com/v1`. The trustchain is not local. |
+| **An `applicationId`** | Separates this application's derived keys from others' in the trustchain. |
+
+Device error `6807` arrives as *"Unknown application name"*, which reads like a
+wrong name string rather than a missing install. It is translated into
+`device_app_missing` with the remedy, because that misreading cost real time
+here.
+
+## Status
+
+Implemented and unit-tested against an injected protocol; the encryption
+round-trip, the vault format, and both device error paths are covered.
+**Not yet verified against hardware** — the device used for development has no
+`Ledger Sync` app, and the authenticate flow stops at `6807`. Everything up to
+that point is confirmed live: the device unlocks, the protocol builds, and the
+action reaches `lkrp.steps.openApp` with `confirm-open-app`.

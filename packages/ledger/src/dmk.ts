@@ -79,6 +79,34 @@ export const signerModule = require(
   "@ledgerhq/device-signer-kit-ethereum",
 ) as SignerModule;
 
+interface LkrpModule {
+  LedgerKeyringProtocolBuilder: new (args: {
+    dmk: DeviceManagementKit;
+    applicationId: number;
+    env?: string;
+    baseUrl?: string;
+  }) => { build(): unknown };
+  NobleCryptoService: new () => { createKeyPair(curve: unknown): Promise<unknown> };
+  Curve: { K256: unknown };
+  LKRPEnv: { PROD: string; STAGING: string };
+  Permissions?: { All?: unknown };
+}
+
+/**
+ * Optional: the Keyring Protocol is only needed when secrets are held in a
+ * Key Ring, so a deployment using a file or env source should not fail to
+ * start because the package is absent.
+ */
+export const lkrpModule: LkrpModule | null = (() => {
+  try {
+    return require(
+      "@ledgerhq/device-trusted-app-kit-ledger-keyring-protocol",
+    ) as LkrpModule;
+  } catch {
+    return null;
+  }
+})();
+
 export const DeviceActionStatus = dmkModule.DeviceActionStatus;
 
 export type { DeviceActionState, DeviceManagementKit, SignerEth };

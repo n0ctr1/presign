@@ -28,6 +28,8 @@
     "@ledgerhq/device-signer-kit-ethereum": "1.18.0",
     "@ledgerhq/device-transport-kit-node-hid": "1.0.1",
     "@presign/verdict-engine": "0.0.1",
-    "viem": "2.56.3"
+    "viem": "2.56.3",
+    "@ledgerhq/device-trusted-app-kit-ledger-keyring-protocol": "0.5.0",
+    "@presign/secrets": "0.0.1"
   }
 }

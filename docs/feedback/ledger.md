@@ -263,3 +263,49 @@ always wrong in one direction.
 surface the outcome directly on the completed state — a
 `clearSigningType`/`wasBlindSigned` field on the output would remove the need
 for callers to infer it from a step list at all. The signer already knows.
+
+---
+
+## 2026-09-06 — Key Ring works, but three separate setup steps look like one
+
+**Doing:** holding the Subgraph Studio key in a Ledger Key Ring instead of a
+`.env` file.
+
+**Found:** it works, and the protocol is well shaped for this — one device
+confirmation authenticates a client into the trustchain and yields an
+encryption key, after which encrypt/decrypt are local and need no device. The
+`applicationPath` (`m/0'/16'/0'`) deriving a branch per application id is
+exactly the right property for several tools sharing one device.
+
+Getting there meant discovering three prerequisites in sequence, each surfacing
+only after the previous was satisfied:
+
+1. Device unlocked — `DeviceLockedError`.
+2. `Ledger Sync` app installed — device error `6807`, *"Unknown application
+   name"*.
+3. Trustchain initialised in Ledger Live — *"Ledger Sync must be initialized
+   from Ledger Live with this device."*
+
+Step 3 is the one worth flagging. Installing the app and initialising the
+trustchain are distinct, and after step 2 it is natural to assume the app is
+all that was missing. The message is clear once seen, but it arrives only after
+a full authenticate attempt.
+
+**Impact:** three round trips against hardware, each needing a human. For an
+integration being written headlessly that is expensive, and none of it is in
+the package README — which is a section skeleton with no content at all
+(`How it works`, `Installation`, `Use Cases` are empty headings). Every fact
+above came from reading `.d.ts` files and compiled sources.
+
+**Suggestions:**
+
+- Fill in the README, or point it at Ledger Live's usage as a reference.
+  `authenticate → encryptData/decryptData` is a small, learnable API and the
+  absence of any prose is the single biggest cost here.
+- Expose a pre-flight check — something like `getTrustchainStatus(sessionId)` —
+  returning "locked" / "app missing" / "not initialised" / "ready", so a caller
+  can tell a user everything that is wrong at once instead of discovering it a
+  step at a time.
+- Document how `applicationId` values are assigned. We used `16` because it
+  worked; colliding with another application's id would place our keys in its
+  branch, and there is no stated way to reserve one.

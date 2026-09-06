@@ -149,4 +149,22 @@ export class ForkSimulator {
   getCode(address: Address): Promise<Hex> {
     return this.#rpc<Hex>("eth_getCode", [address, "latest"]);
   }
+
+  /** Read-only call; null on revert, since a missing interface is not an error. */
+  async call(address: Address, data: Hex): Promise<Hex | null> {
+    try {
+      return await this.#rpc<Hex>("eth_call", [{ to: address, data }, "latest"]);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Bind the read helpers into the shape a rule expects. */
+  asRuleReaders() {
+    return {
+      getStorageAt: this.getStorageAt.bind(this),
+      getCode: this.getCode.bind(this),
+      call: this.call.bind(this),
+    };
+  }
 }

@@ -129,6 +129,15 @@ export interface RuleContext {
   /** Reads chain state at the forked block. */
   readonly getStorageAt: (address: Address, slot: Hex) => Promise<Hex>;
   readonly getCode: (address: Address) => Promise<Hex>;
+  /**
+   * Read-only call against the fork.
+   *
+   * Returns null when the call reverts, rather than throwing. Probing a
+   * contract for an interface it may not implement is a normal, expected
+   * miss — a rule should be able to ask "are you a timelock?" without
+   * wrapping every question in a try block.
+   */
+  readonly call: (address: Address, data: Hex) => Promise<Hex | null>;
 }
 
 /** A rule turns evidence into findings. Never throws for "nothing found". */

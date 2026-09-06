@@ -31,3 +31,14 @@ export {
   UnlimitedApprovalRule,
   type UnlimitedApprovalRuleOptions,
 } from "./rules/r1-unlimited-approval.js";
+
+export {
+  eip1967Slot,
+  EIP1967_ADMIN_SLOT,
+  EIP1967_BEACON_SLOT,
+  EIP1967_IMPLEMENTATION_SLOT,
+  MutableLogicRule,
+  ZEPPELINOS_ADMIN_SLOT,
+  ZEPPELINOS_IMPLEMENTATION_SLOT,
+  type MutableLogicRuleOptions,
+} from "./rules/r2-mutable-logic.js";

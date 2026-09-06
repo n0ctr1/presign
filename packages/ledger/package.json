@@ -1,0 +1,33 @@
+{
+  "name": "@presign/ledger",
+  "version": "0.0.1",
+  "description": "Escalate a medium-risk verdict to on-device human confirmation. The device shows what is being signed, not merely who is asking.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@ledgerhq/device-management-kit": "1.9.0",
+    "@ledgerhq/device-signer-kit-ethereum": "1.18.0",
+    "@ledgerhq/device-transport-kit-node-hid": "1.0.1",
+    "@presign/verdict-engine": "0.0.1",
+    "viem": "2.56.3"
+  }
+}

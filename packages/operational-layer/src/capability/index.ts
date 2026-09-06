@@ -20,6 +20,7 @@ import type {
   LivenessChecker,
   NetworkId,
   RuleRequirement,
+  SchemaFamily,
 } from "../types.js";
 
 interface CacheEntry {
@@ -113,8 +114,19 @@ export class CapabilityIndex {
     this.#now = options.now ?? (() => new Date());
   }
 
-  static cacheKey(ruleId: string, network: NetworkId): string {
-    return `${ruleId}:${network}`;
+  /**
+   * Keyed by schema family as well as rule, because one rule binds to several
+   * families: R3 reads `markets` on a lending schema and `liquidityPools` on a
+   * DEX schema. Keying on the rule alone lets the second warm-up silently
+   * evict the first, and a verdict would then resolve against deployments
+   * probed for a different set of fields entirely.
+   */
+  static cacheKey(
+    ruleId: string,
+    schemaFamily: SchemaFamily,
+    network: NetworkId,
+  ): string {
+    return `${ruleId}:${schemaFamily}:${network}`;
   }
 
   /**
@@ -149,11 +161,14 @@ export class CapabilityIndex {
       (record): record is DeploymentRecord => record !== null,
     );
 
-    this.#cache.set(CapabilityIndex.cacheKey(requirement.ruleId, network), {
-      records,
-      candidateCount: candidates.length,
-      warmedAt: this.#now(),
-    });
+    this.#cache.set(
+      CapabilityIndex.cacheKey(requirement.ruleId, requirement.schemaFamily, network),
+      {
+        records,
+        candidateCount: candidates.length,
+        warmedAt: this.#now(),
+      },
+    );
 
     return this.resolve(requirement, network);
   }
@@ -192,7 +207,9 @@ export class CapabilityIndex {
     network: NetworkId,
   ): CapabilityResolution {
     const { ruleId } = requirement;
-    const entry = this.#cache.get(CapabilityIndex.cacheKey(ruleId, network));
+    const entry = this.#cache.get(
+      CapabilityIndex.cacheKey(ruleId, requirement.schemaFamily, network),
+    );
 
     if (entry === undefined) {
       return { satisfied: false, ruleId, reason: "not_warmed", rejected: [] };
@@ -251,8 +268,15 @@ export class CapabilityIndex {
     return { satisfied: true, ruleId, records };
   }
 
-  /** When this rule was last warmed, for operator visibility. */
-  warmedAt(ruleId: string, network: NetworkId): Date | null {
-    return this.#cache.get(CapabilityIndex.cacheKey(ruleId, network))?.warmedAt ?? null;
+  /** When this rule and family were last warmed, for operator visibility. */
+  warmedAt(
+    ruleId: string,
+    schemaFamily: SchemaFamily,
+    network: NetworkId,
+  ): Date | null {
+    return (
+      this.#cache.get(CapabilityIndex.cacheKey(ruleId, schemaFamily, network))
+        ?.warmedAt ?? null
+    );
   }
 }

@@ -46,10 +46,17 @@ const PROTOCOL_TYPE_TO_FAMILY: Readonly<Record<string, SchemaFamily>> = {
   perpetuals: "perpetuals",
 };
 
+/**
+ * Values exactly as the corpus stores them, confirmed against
+ * `list_registry_stats`. The multi-word ones are hyphenated
+ * (`yield-aggregator`, `nft-marketplace`), not underscored — querying the
+ * underscored spelling returns zero rows rather than an error, so the mistake
+ * reads as "this family has no deployments" instead of "the filter is wrong".
+ */
 const FAMILY_TO_PROTOCOL_TYPE: Readonly<Record<SchemaFamily, string>> = {
   "lending-cdp": "lending",
   "dex-amm": "dex",
-  "yield-vault": "yield_aggregator",
+  "yield-vault": "yield-aggregator",
   staking: "staking",
   perpetuals: "perpetuals",
 };

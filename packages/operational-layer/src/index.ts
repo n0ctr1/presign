@@ -47,6 +47,15 @@ export {
 export { LivenessProbe, type LivenessProbeOptions } from "./probes/liveness.js";
 
 export {
+  DEFAULT_MAX_LAG_SECONDS,
+  findRequirement,
+  RULE_REQUIREMENTS,
+  R3_DEX,
+  R3_LENDING,
+  R3_VAULT,
+} from "./rules/requirements.js";
+
+export {
   CapabilityIndex,
   effectiveLagSeconds,
   type CapabilityIndexOptions,

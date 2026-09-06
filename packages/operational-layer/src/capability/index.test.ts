@@ -230,5 +230,8 @@ test("warm returns the resolution it just produced", async () => {
   const resolution = await index.warm(R3, "mainnet");
 
   assert.ok(resolution.satisfied);
-  assert.equal(index.warmedAt("R3", "mainnet")?.getTime(), T0.getTime());
+  assert.equal(
+    index.warmedAt("R3", "lending-cdp", "mainnet")?.getTime(),
+    T0.getTime(),
+  );
 });

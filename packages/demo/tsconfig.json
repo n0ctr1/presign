@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "./src", "outDir": "./dist" },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../gateway" },
+    { "path": "../ledger" },
+    { "path": "../operational-layer" },
+    { "path": "../secrets" },
+    { "path": "../verdict-engine" }
+  ]
+}

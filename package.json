@@ -15,7 +15,8 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo"
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
+    "demo": "npm run build && node packages/demo/dist/bin.js"
   },
   "devDependencies": {
     "@types/node": "22.13.5",

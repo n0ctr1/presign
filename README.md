@@ -140,11 +140,26 @@ structurally distinct from `low`.
 ```
 packages/operational-layer   freshness, conformance, capability binding
 packages/verdict-engine      simulation, rules R1-R3, tiered verdict
+packages/gateway             composes verdict, escalation and confirmation
+packages/ledger              on-device confirmation, Key Ring secret source
+packages/demo                runnable end-to-end demonstration
 packages/mcp-server          MCP surface + SKILL.md for other agents
 packages/secrets             credential resolution with declared provenance
 docs/feedback/               per-partner tooling feedback, written as we go
 docs/setup/                  device and environment runbooks
 ```
+
+### Running it
+
+```bash
+npm install
+npm run demo              # four scenarios against a live mainnet fork
+npm run demo -- --device  # medium tier escalates to a real Ledger
+```
+
+Needs a Subgraph Studio API key at
+`~/.presign/secrets/the-graph__studio-api-key` (mode `0600`), or
+`THE_GRAPH_STUDIO_API_KEY` in the environment, plus Foundry for the fork.
 
 ### Using the data layer without the rest
 

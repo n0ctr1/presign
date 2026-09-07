@@ -1,0 +1,23 @@
+{
+  "name": "@presign/agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "An agent that buys a risk verdict before signing, paying per call over x402 on Hedera.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "presign-agent": "./dist/bin.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "tsc -b && node dist/bin.js"
+  },
+  "dependencies": {
+    "@x402/core": "2.25.0",
+    "@x402/fetch": "2.25.0",
+    "@x402/hedera": "2.25.0"
+  }
+}

@@ -7,12 +7,12 @@
  */
 
 import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 
 import {
-  CapabilityIndex,
   ConformanceProbe,
   GatewayClient,
   JsonRpcChainHeadSource,
@@ -25,6 +25,7 @@ import {
   FileSecretSource,
   SecretResolver,
 } from "@presign/secrets";
+import { ProxyUpgradeIndex } from "@presign/substreams";
 import {
   AnvilFork,
   describeRpc,
@@ -144,10 +145,6 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     chainHead: new JsonRpcChainHeadSource({ endpoints: { mainnet: rpc.url } }),
   });
 
-  // Warms candidates ahead of the request path. Not used by R3's
-  // counterparty-specific lookup, but part of what a deployment runs.
-  void new CapabilityIndex({ discovery, conformance, liveness, maxCandidates: 20 });
-
   const protocol = new OperationalProtocolContext({
     discovery,
     conformance,
@@ -165,13 +162,34 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     chainId: 1,
   })).blockNumber;
 
+  /*
+   * Proxy upgrade history, started in the background when a key is present.
+   *
+   * Not awaited: a backfill takes a minute or two, and the demo should print
+   * verdicts rather than a progress bar. R2 reports the history as unavailable
+   * until the stream is live, which is the honest answer while it is filling.
+   */
+  let upgrades: ProxyUpgradeIndex | undefined;
+  try {
+    const substreamsKey = (
+      await readFile(join(homedir(), ".presign", "secrets", "substreams__api-key"), "utf8")
+    ).trim();
+    upgrades = ProxyUpgradeIndex.create({ apiKey: substreamsKey, startBlock: -600 });
+    void upgrades.run().catch(() => {
+      // R2 will report the history as unavailable; nothing else to do here.
+    });
+    console.log("Proxy upgrade stream: started");
+  } catch {
+    console.log("Proxy upgrade stream: no Substreams key, R2 runs without upgrade history");
+  }
+
   const rules = (maxLagSeconds?: number) => [
     // The spender used by the high-risk scenario, standing in for an incident
     // registry entry.
     new UnlimitedApprovalRule({
       incidentRegistry: ["0x00000000000000000000000000000000deadbeef"],
     }),
-    new MutableLogicRule(),
+    new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
     new InvariantBreachRule({
       protocol,
       ...(maxLagSeconds === undefined ? {} : { maxLagSeconds }),
@@ -186,6 +204,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     }),
     forkBlock,
     close: () => {
+      upgrades?.stop();
       registry.close();
       fork.stop();
     },

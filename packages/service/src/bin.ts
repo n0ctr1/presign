@@ -36,7 +36,10 @@ import {
 
 import { buildRegistryClient } from "./registry.js";
 
+import { ProxyUpgradeIndex } from "@presign/substreams";
+
 import { createApp, type HederaNetwork } from "./app.js";
+import { readTopicId, writeTopicId } from "./state.js";
 
 const SECRETS = join(homedir(), ".presign", "secrets");
 const readSecret = async (name: string) =>
@@ -62,15 +65,20 @@ async function main(): Promise<void> {
   const operatorKey = await readSecret(`hedera__${short}-service-key`);
 
   console.log(`Opening HCS journal on ${short}…`);
+  // Environment first for a deliberate override, then the remembered topic.
+  // Creating a new one on every restart would scatter the journal across
+  // topics, and a journal in fragments is not a track record.
+  const knownTopic = process.env["HCS_TOPIC_ID"] ?? (await readTopicId(short));
   const journal = await HcsVerdictJournal.open({
     network: short,
     operatorId,
     operatorKey,
-    ...(process.env["HCS_TOPIC_ID"] === undefined
-      ? {}
-      : { topicId: process.env["HCS_TOPIC_ID"] }),
+    ...(knownTopic === null ? {} : { topicId: knownTopic }),
   });
-  console.log(`  topic ${journal.topicId} — ${journal.explorerUrl}`);
+  if (knownTopic === null) await writeTopicId(short, journal.topicId);
+  console.log(
+    `  topic ${journal.topicId} (${knownTopic === null ? "created" : "reused"}) — ${journal.explorerUrl}`,
+  );
 
   const rpc = await resolveEthereumRpc();
   console.log(`Starting mainnet fork for simulation — ${describeRpc(rpc)}`);
@@ -86,7 +94,41 @@ async function main(): Promise<void> {
   const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
   const simulator = new ForkSimulator(fork.rpcUrl);
 
-  const rules = () => [new UnlimitedApprovalRule(), new MutableLogicRule()];
+  /*
+   * Proxy upgrade history, when a Substreams key is available.
+   *
+   * Started in the background and deliberately not awaited: backfilling takes
+   * a minute or two, and blocking start-up on it would trade a working service
+   * for a slightly better-informed one. R2 reads the index as it fills, and
+   * reports the history as unavailable while the stream is not yet live —
+   * which is honest, since an index that has seen nothing has nothing to say.
+   */
+  let upgrades: ProxyUpgradeIndex | undefined;
+  try {
+    const substreamsKey = await readSecret("substreams__api-key");
+    upgrades = ProxyUpgradeIndex.create({
+      apiKey: substreamsKey,
+      startBlock: -2000,
+    });
+    void upgrades.run().catch((error: unknown) => {
+      // Logged, not swallowed. A dead stream makes R2 report the history as
+      // unavailable rather than clean, but an operator still needs to know.
+      console.error(
+        `  upgrade stream stopped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+    console.log("  proxy upgrade stream started (backfilling ~2000 blocks)");
+  } catch {
+    console.log(
+      "  no Substreams key — R2 runs without upgrade history " +
+        "(it will report the history as unavailable rather than clean)",
+    );
+  }
+
+  const rules = () => [
+    new UnlimitedApprovalRule(),
+    new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
+  ];
   const local = new PresignPipeline({
     engine: new VerdictEngine({ simulator, rules: rules() }),
   });
@@ -132,6 +174,19 @@ async function main(): Promise<void> {
 
   const app = createApp({
     pipelines: full === undefined ? { local } : { local, full },
+    sources: () =>
+      upgrades === undefined
+        ? []
+        : [
+            {
+              name: "proxy-upgrade-stream",
+              live: upgrades.live,
+              detail: {
+                ...upgrades.stats,
+                ...(upgrades.failure === null ? {} : { failure: upgrades.failure }),
+              },
+            },
+          ],
     journal,
     payTo: operatorId,
     network,
@@ -152,6 +207,7 @@ async function main(): Promise<void> {
   });
 
   const shutdown = () => {
+    upgrades?.stop();
     closeRegistry?.();
     fork.stop();
     journal.close();

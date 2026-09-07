@@ -5,8 +5,12 @@
   "description": "Runnable end-to-end demonstration: unsigned transaction to verdict to device confirmation.",
   "license": "MIT",
   "type": "module",
-  "bin": { "presign-demo": "./dist/bin.js" },
-  "engines": { "node": ">=22.0.0" },
+  "bin": {
+    "presign-demo": "./dist/bin.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "build": "tsc -b",
     "demo": "tsc -b && node dist/bin.js"
@@ -16,6 +20,7 @@
     "@presign/ledger": "0.0.1",
     "@presign/operational-layer": "0.0.1",
     "@presign/secrets": "0.0.1",
-    "@presign/verdict-engine": "0.0.1"
+    "@presign/verdict-engine": "0.0.1",
+    "@presign/substreams": "0.0.1"
   }
 }

@@ -122,7 +122,11 @@ async function main(): Promise<void> {
   const settlement = response.headers.get("payment-response");
   const body = (await response.json()) as {
     decision: string;
-    verdict: { tier: string; action: string; findings: { rule: string; title: string }[] };
+    verdict: {
+      tier: string;
+      action: string;
+      findings: { rule: string; title: string; evidence?: Record<string, unknown> }[];
+    };
     cost: Record<string, unknown>;
     journal: Record<string, unknown>;
   };
@@ -137,6 +141,12 @@ async function main(): Promise<void> {
   console.log(`  ${body.verdict.action}`);
   for (const finding of body.verdict.findings) {
     console.log(`  · ${finding.rule}: ${finding.title}`);
+    // The evidence is the point of paying: a tier alone is a number to trust,
+    // while the evidence is something the agent's operator can check.
+    const history = (finding as { evidence?: Record<string, unknown> }).evidence?.[
+      "upgrade_history"
+    ];
+    if (history !== undefined) console.log(`      upgrade history: ${JSON.stringify(history)}`);
   }
   console.log("\ncost:", JSON.stringify(body.cost));
   console.log("journal:", JSON.stringify(body.journal));

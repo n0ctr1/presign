@@ -55,8 +55,25 @@ export interface ServicePipelines {
   readonly full?: PresignPipeline;
 }
 
+/**
+ * Anything whose liveness an operator needs to see without buying a verdict.
+ *
+ * The proxy upgrade stream is the first: while it is backfilling or after it
+ * has died, R2 reports upgrade history as unavailable rather than clean. That
+ * is the correct behaviour, and it is also invisible from outside unless the
+ * service says so — an operator should not have to pay for a verdict to
+ * discover that a data source stopped.
+ */
+export interface HealthSource {
+  readonly name: string;
+  readonly live: boolean;
+  readonly detail?: Readonly<Record<string, unknown>>;
+}
+
 export interface ServiceOptions {
   readonly pipelines: ServicePipelines;
+  /** Reported by /health. Evaluated per request, not cached. */
+  readonly sources?: () => readonly HealthSource[];
   readonly journal: VerdictJournal;
   /** Hedera account that receives payment. */
   readonly payTo: string;
@@ -160,6 +177,11 @@ export function createApp(options: ServiceOptions): Hono {
       network: options.network,
       payTo: options.payTo,
       rules: fullAvailable ? ["R1", "R2", "R3"] : ["R1", "R2"],
+      sources: (options.sources?.() ?? []).map((source) => ({
+        name: source.name,
+        live: source.live,
+        ...(source.detail ?? {}),
+      })),
     }),
   );
 

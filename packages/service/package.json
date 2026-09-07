@@ -36,6 +36,7 @@
     "@x402/hono": "2.25.0",
     "hono": "4.13.7",
     "@presign/operational-layer": "0.0.1",
-    "@presign/secrets": "0.0.1"
+    "@presign/secrets": "0.0.1",
+    "@presign/substreams": "0.0.1"
   }
 }

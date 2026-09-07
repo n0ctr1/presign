@@ -1,45 +1,69 @@
 # presign
 
-**Pre-flight transaction risk advisor for agentic wallets.**
+**Risk verdicts for agent wallets that declare how stale their evidence was.**
 
-An autonomous agent holding a key will sign whatever its planner hands it. `presign`
-sits in front of that signature: the agent submits the *unsigned* transaction, and
-gets back a machine-readable verdict — a risk tier, the rules that fired, and the
-**provenance of the data the verdict was made from**.
+An autonomous agent holding a key signs whatever its planner hands it. `presign`
+answers one question before that signature — *is this safe to sign?* — and
+attaches the thing that makes the answer checkable: which data it rested on, and
+how far behind chain head that data was.
+
+The second half is the part nobody else returns.
+
+## The claim, demonstrated
+
+Same call to the Aave V3 pool. Same indexed data, same code path, same rules.
+Only the freshness budget differs:
 
 ```
-low     -> the agent signs on its own
-medium  -> escalate to on-device confirmation (Ledger)
-high    -> refuse, and write the justification to Hedera Consensus Service
+budget 30s  →  low          source: Aave V3 Ethereum (QmcXE5QVcBcv…), lag 12.3s
+budget  1s  →  unavailable  R3 could not run: all_candidates_stale
 ```
 
-Built for [ETHOnline 2026](https://ethglobal.com/events/ethonline2026), "Building from Scratch" track.
+A clean verdict is not merely unlikely without fresh context — it is
+unreachable. `unavailable` is a separate outcome in the type system rather than
+a softer way of saying `low`, so a rule that cannot obtain fresh data has no way
+to report "nothing found". Both rows above come from `npm run demo`.
+
+## Why this rather than an existing scanner
+
+Pre-signature simulation is not new. Hexagate, Blockaid and GoPlus all do it, and
+the agent-facing packaging — MCP servers, LangChain tools, pay-per-call x402
+endpoints — is already shipped. **Acting before the signature is not a
+differentiator, and this repo does not claim it as one.**
+
+What none of them return is how fresh the evidence was. A green verdict computed
+from a subgraph six hours behind chain head is indistinguishable from one
+computed at chain head. On a dashboard that is a footnote. Immediately before a
+signature it is the entire risk.
+
+Three things follow, and each is load-bearing rather than decorative:
+
+1. **Lag is in the response.** Every verdict names the deployments it was
+   computed from and how many seconds behind head each one was — including when
+   nothing was found, because "no problems" and "no problems according to a
+   deployment four seconds behind head" are different claims and only the second
+   can be checked.
+2. **Fail-closed on stale context.** If the counterparty is a pool or market of a
+   known protocol and fresh data for it is unavailable or past budget, the answer
+   is `unavailable`, never `safe`.
+3. **The data layer ships separately.** It is exposed as an MCP server with a
+   `SKILL.md`, so another team can ask *"which deployments can answer this rule
+   right now, within this lag budget?"* without adopting our rules, our
+   simulation, or our opinions about risk.
+
+## What the verdict tells the agent to do
+
+```
+low          the agent signs on its own
+medium       escalate to on-device human confirmation (Ledger)
+high         refuse
+unavailable  refuse — the evidence was unobtainable, which is not the same as safe
+```
+
+Built for [ETHOnline 2026](https://ethglobal.com/events/ethonline2026), "Building
+from Scratch" track.
 
 ---
-
-## Why another risk API
-
-Pre-signature simulation is not new — Hexagate, Blockaid and GoPlus all do it, and
-the agent-facing packaging (MCP servers, LangChain tools, pay-per-call x402
-endpoints) is already shipped by incumbents. Speed of integration is no longer a
-differentiator, and this repo does not claim it as one.
-
-What none of them return is **how fresh the data behind the verdict was**. A green
-verdict computed from a subgraph that is six hours behind chain head looks exactly
-like a green verdict computed from chain head. On a dashboard that is a footnote.
-Immediately before a signature it is the entire risk.
-
-`presign` makes three things load-bearing:
-
-1. **Data lag is declared in the response.** Every verdict names the deployments it
-   was computed from and how many seconds behind chain head each one was.
-2. **Fail-closed on stale context.** If the counterparty is identified as a pool or
-   market of a known protocol and fresh data for it is unavailable or lagging past
-   budget, the answer is `unavailable` — never `safe`. A green verdict is
-   physically unreachable without fresh context.
-3. **The data layer ships separately.** The operational layer is exposed as an MCP
-   server and a `SKILL.md`, so another team can ask *"which deployments can answer
-   this rule right now, within this lag budget?"* without touching our engine.
 
 ## Scope, stated plainly
 
@@ -120,10 +144,10 @@ the Messari `markets` fields R3 reads — Aave V2, Aave V3, Compound V2,
 Compound V3 and Morpho Blue — with no per-protocol code. That is the coverage
 lever: one rule, one schema family, every protocol that speaks it.
 
-### The guarantee, demonstrated
+### What `npm run demo` prints
 
-Four scenarios against a live mainnet fork. Only the last two differ, and only
-in the freshness budget:
+Four scenarios against a live mainnet fork. The last two are the pair from the
+top of this README, shown here in context:
 
 | Scenario | Verdict |
 |---|---|
@@ -132,9 +156,10 @@ in the freshness budget:
 | Call to Aave V3 Pool, healthy, fresh data | `low` — source named, 12.3 s lag |
 | Same call, 1-second freshness budget | `unavailable` — do not sign |
 
-The last row is the point. Same protocol, same data, same code path: when fresh
-context cannot be obtained the answer is `unavailable`, and `unavailable` is
-structurally distinct from `low`.
+The first row never reaches the device: a transaction already judged dangerous
+is refused rather than shown to a human, because a prompt is a request and
+people approve prompts. `npm run demo -- --device` runs the second row against a
+real Ledger.
 
 ## Repository layout
 

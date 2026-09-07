@@ -37,9 +37,24 @@ const call = (to: string): UnsignedTransaction => ({
   chainId: 1,
 });
 
-function report(title: string, note: string, outcome: { verdict: Verdict } & Record<string, unknown>) {
-  const line = "─".repeat(72);
+/**
+ * Print the heading, then run, then print the outcome.
+ *
+ * The ordering is not cosmetic. Device progress is logged while the scenario
+ * runs, so printing the heading afterwards put those lines under the *previous*
+ * scenario — which made it look as though the refused high-risk transaction had
+ * reached the device, the exact opposite of what this demo demonstrates.
+ */
+async function scenario(
+  title: string,
+  note: string,
+  run: () => Promise<{ verdict: Verdict } & Record<string, unknown>>,
+): Promise<void> {
+  const line = "\u2500".repeat(72);
   console.log(`\n${line}\n${title}\n${note}\n${line}`);
+
+  const outcome = await run();
+
   console.log(describe(outcome as never));
   // The reason code alone is not actionable. A demo that says "device_error"
   // without saying why sends a reviewer looking in the wrong place.
@@ -53,7 +68,7 @@ function report(title: string, note: string, outcome: { verdict: Verdict } & Rec
   console.log(`  provenance: simulated at block ${simulatedAtBlock}`);
   for (const source of sources) {
     console.log(
-      `    source ${source.displayName} (${source.deploymentId.slice(0, 12)}…) lag ${source.effectiveLagSeconds}s`,
+      `    source ${source.displayName} (${source.deploymentId.slice(0, 12)}\u2026) lag ${source.effectiveLagSeconds}s`,
     );
   }
   for (const rule of unavailableRules) {
@@ -93,33 +108,43 @@ async function main(): Promise<void> {
   const strict = new PresignPipeline({ engine: wiring.strictEngine });
 
   try {
-    report(
+    await scenario(
       "1. Unlimited USDC approval to a spender in the incident registry",
       "   Expect: refused, without ever reaching the device.",
-      await pipeline.run(approve(FLAGGED_SPENDER, "f".repeat(64))),
+      () => pipeline.run(approve(FLAGGED_SPENDER, "f".repeat(64))),
     );
 
-    const bounded = approve(FLAGGED_SPENDER, (1000n * 10n ** 6n).toString(16).padStart(64, "0"));
-    report(
+    const bounded = approve(
+      FLAGGED_SPENDER,
+      (1000n * 10n ** 6n).toString(16).padStart(64, "0"),
+    );
+    await scenario(
       "2. Bounded approval (1000 USDC) to the same spender",
       useDevice
-        ? "   Expect: medium — LOOK AT THE LEDGER and approve or reject."
-        : "   Expect: medium — human confirmation required (run with --device to try it).",
-      await pipeline.run(bounded, { ...bounded, nonce: 0, gasLimit: 100_000n,
-        maxFeePerGas: 30_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n }),
+        ? "   Expect: medium \u2014 LOOK AT THE LEDGER and approve or reject."
+        : "   Expect: medium \u2014 human confirmation required (run with --device to try it).",
+      () =>
+        pipeline.run(bounded, {
+          ...bounded,
+          nonce: 0,
+          gasLimit: 100_000n,
+          maxFeePerGas: 30_000_000_000n,
+          maxPriorityFeePerGas: 1_000_000_000n,
+        }),
     );
 
-    report(
-      "3. Call to Aave V3 Pool — healthy protocol, fresh indexed data",
+    await scenario(
+      "3. Call to Aave V3 Pool \u2014 healthy protocol, fresh indexed data",
       "   Expect: low, with the deployment and its lag named.",
-      await pipeline.run(call(AAVE_V3_POOL)),
+      () => pipeline.run(call(AAVE_V3_POOL)),
     );
 
-    report(
+    await scenario(
       "4. The same Aave call under a 1-second freshness budget",
       "   Expect: unavailable. Same protocol, same data, only the budget changed.",
-      await strict.run(call(AAVE_V3_POOL)),
+      () => strict.run(call(AAVE_V3_POOL)),
     );
+
   } finally {
     await closeDevice?.();
     wiring.close();

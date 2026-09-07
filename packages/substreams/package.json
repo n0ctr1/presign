@@ -1,0 +1,23 @@
+{
+  "name": "@presign/substreams",
+  "version": "0.0.1",
+  "description": "Streams EIP-1967 proxy upgrades from Substreams, so a rule can say when logic last changed rather than only that it can.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "1.10.0",
+    "@connectrpc/connect": "1.6.1",
+    "@connectrpc/connect-node": "1.6.1",
+    "@substreams/core": "0.17.0",
+    "@substreams/manifest": "0.16.0"
+  }
+}

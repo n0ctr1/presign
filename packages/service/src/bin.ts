@@ -46,6 +46,16 @@ async function main(): Promise<void> {
   const network = (process.env["HEDERA_NETWORK"] ?? "hedera:testnet") as HederaNetwork;
   const short = network === "hedera:mainnet" ? "mainnet" : "testnet";
   const port = Number(process.env["PORT"] ?? 4021);
+  /*
+   * Bind address, explicit rather than implicit.
+   *
+   * @hono/node-server defaults to `::`, so the service listens on every
+   * interface whether or not that was intended — and the startup line used to
+   * print 127.0.0.1 regardless, which says the opposite of what is happening.
+   * A payment-gated service should state its exposure and let an operator
+   * narrow it.
+   */
+  const host = process.env["HOST"] ?? "0.0.0.0";
 
   const operatorId = await readSecret(`hedera__${short}-service-id`);
   const operatorKey = await readSecret(`hedera__${short}-service-key`);
@@ -116,8 +126,12 @@ async function main(): Promise<void> {
     network,
   });
 
-  serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`\npresign service listening on http://127.0.0.1:${info.port}`);
+  serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+    const reachable =
+      info.address === "::" || info.address === "0.0.0.0"
+        ? "all interfaces"
+        : info.address;
+    console.log(`\npresign service listening on port ${info.port} (${reachable})`);
     console.log(`  network:     ${network}`);
     console.log(`  pay to:      ${operatorId}`);
     console.log(`  quote:       GET  /quote`);

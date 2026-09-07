@@ -174,12 +174,42 @@ export function createApp(options: ServiceOptions): Hono {
     network: options.network,
   });
 
+  /**
+   * What an unpaid caller sees in the body of the 402.
+   *
+   * The default is an empty object, which tells a human nothing: the payment
+   * requirements live in the `payment-required` header, so anyone poking the
+   * endpoint with curl sees `{}` and reasonably concludes it is broken. A
+   * service that refuses should say why and how to proceed — the header stays
+   * the machine-readable contract, and this is the same information in a form
+   * a person can read.
+   */
+  const explainPayment = (route: string, tinybars: bigint, rules: readonly string[]) =>
+    () => ({
+      contentType: "application/json",
+      body: {
+        error: "payment_required",
+        message: `This endpoint is paid per call. Send an x402 payment of ${formatHbar(tinybars)} HBAR to continue.`,
+        price: { hbar: formatHbar(tinybars), tinybars: tinybars.toString(), asset: "HBAR" },
+        rules,
+        network: options.network,
+        pay_to: options.payTo,
+        how: [
+          "Machine-readable requirements are in the `payment-required` response header (base64 JSON).",
+          "An x402 client signs a Hedera transfer and retries with `payment-signature`.",
+          "See GET /quote for prices without attempting payment.",
+        ],
+        route,
+      },
+    });
+
   const paidRoutes: Record<string, unknown> = {
     "POST /verdict/local": {
       accepts: accepts(BASE_TINYBARS),
       description:
         "Pre-signature risk verdict: unlimited-approval and proxy-mutability checks over a simulated state diff.",
       mimeType: "application/json",
+      unpaidResponseBody: explainPayment("/verdict/local", BASE_TINYBARS, ["R1", "R2"]),
     },
   };
   if (fullAvailable) {
@@ -188,6 +218,11 @@ export function createApp(options: ServiceOptions): Hono {
       description:
         "Pre-signature risk verdict including protocol invariant checks against freshness-gated indexed data.",
       mimeType: "application/json",
+      unpaidResponseBody: explainPayment(
+        "/verdict/full",
+        BASE_TINYBARS + INDEXED_DATA_TINYBARS,
+        ["R1", "R2", "R3"],
+      ),
     };
   }
 

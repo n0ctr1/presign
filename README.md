@@ -108,7 +108,8 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
 | Fork simulation + rules R1-R3 | done — verified against live mainnet fork |
 | Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
-| x402 (Hedera in, The Graph out) + HCS journal | not started |
+| x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
+| x402 outbound (The Graph on Base) | not started |
 
 Measured against live mainnet on 2026-09-05: liveness 173 ms, conformance
 394 ms, warming R3 across six lending candidates 611 ms, cached resolve
@@ -142,6 +143,9 @@ packages/operational-layer   freshness, conformance, capability binding
 packages/verdict-engine      simulation, rules R1-R3, tiered verdict
 packages/gateway             composes verdict, escalation and confirmation
 packages/ledger              on-device confirmation, Key Ring secret source
+packages/hedera              verdict journal on the Consensus Service
+packages/service             x402-gated verdict service
+packages/agent               an agent that buys a verdict before signing
 packages/demo                runnable end-to-end demonstration
 packages/mcp-server          MCP surface + SKILL.md for other agents
 packages/secrets             credential resolution with declared provenance

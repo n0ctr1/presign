@@ -249,14 +249,34 @@ export class DeviceConfirmation {
           }
 
           if (status === DeviceActionStatus.Error) {
-            const error = state["error"] as { _tag?: string; message?: string };
+            const error = state["error"] as {
+              _tag?: string;
+              message?: string;
+              errorCode?: string;
+            };
             const message = error?.message ?? error?._tag ?? "unknown device error";
-            // A user rejection surfaces as an app error code, not as Stopped.
-            const rejected = /denied|reject|0x6985/i.test(message);
+
+            /*
+             * A decline is reported through `errorCode`, not through the
+             * message. Recorded from a Nano X:
+             *
+             *   { _tag: "EthAppCommandError",
+             *     errorCode: "6985",
+             *     message: "Condition not satisfied" }
+             *
+             * `6985` is "conditions of use not satisfied" — the user pressed
+             * reject. An earlier version matched on the message text, which
+             * contains none of the words one would look for, so a deliberate
+             * human decision was classified as a device fault and the person's
+             * "no" was lost. Read the code, not the prose.
+             */
+            const rejected =
+              error?.errorCode === "6985" || /\b6985\b/.test(message);
+
             finish({
               approved: false,
               reason: rejected ? "rejected_on_device" : "device_error",
-              detail: message,
+              detail: rejected ? `declined on the device (${message})` : message,
             });
           }
         },

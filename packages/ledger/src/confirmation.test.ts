@@ -157,15 +157,26 @@ test("a stopped action is not reported as a human decision", async () => {
   assert.equal(result.reason, "cancelled");
 });
 
-test("an app rejection status word is read as a decline, not a fault", async () => {
+test("a decline is read from errorCode, not from the message text", async () => {
+  // Recorded verbatim from a Nano X after pressing reject. The message says
+  // "Condition not satisfied" and contains none of the words one would search
+  // for, so matching on prose lost the person's decision and reported a fault.
   const result = await confirmation(
-    scriptedSigner([{ status: "error", error: { message: "Ledger error: 0x6985" } }]),
+    scriptedSigner([
+      {
+        status: "error",
+        error: {
+          _tag: "EthAppCommandError",
+          errorCode: "6985",
+          message: "Condition not satisfied",
+        },
+      },
+    ]),
   ).request(transaction, verdict("medium"));
 
   assert.ok(!result.approved);
-  // 0x6985 is "conditions of use not satisfied" — the user pressed reject.
-  // Calling that a device fault would hide a deliberate human decision.
   assert.equal(result.reason, "rejected_on_device");
+  assert.match(result.detail, /declined on the device/);
 });
 
 test("a genuine device fault is distinguished from a decline", async () => {

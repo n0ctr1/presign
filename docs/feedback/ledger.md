@@ -309,3 +309,45 @@ above came from reading `.d.ts` files and compiled sources.
 - Document how `applicationId` values are assigned. We used `16` because it
   worked; colliding with another application's id would place our keys in its
   branch, and there is no stated way to reserve one.
+
+---
+
+## 2026-09-07 — device-action outcomes, recorded rather than inferred
+
+**Doing:** making sure a human's decision is reported as their decision.
+
+**Found:** the three outcomes of `signTransaction` are distinguishable, but
+only one of them is legible from the error message. Recorded from a Nano X:
+
+| Outcome | State |
+|---|---|
+| Approved | `{ status: "completed", output: { r, s, v } }` |
+| Declined | `{ status: "error", error: { _tag: "EthAppCommandError", errorCode: "6985", message: "Condition not satisfied" } }` |
+| Action halted | `{ status: "stopped" }` — no steps, seen when the transport failed |
+
+The decline is the awkward one. `"Condition not satisfied"` is accurate ISO
+7816 language but contains none of the words a caller would search for, so any
+implementation matching on message text classifies a deliberate human "no" as a
+device fault. We did exactly that until this run. The signal is in `errorCode`.
+
+`stopped` is genuinely distinct: we saw it only when the HID transport was
+picking the wrong interface, i.e. when nobody had been asked anything. So
+mapping `stopped` to "the user rejected" is wrong in the other direction — it
+invents a decision by a person who never saw a prompt.
+
+**Impact:** for a service whose value rests on reporting honestly, both errors
+matter. One loses a real refusal, the other manufactures one.
+
+**Suggestion:** a typed outcome on the completed/error state — something like
+`userDeclined: true` — would remove the need to interpret status words at all.
+Failing that, documenting that `6985` is the decline path would be enough;
+nothing in the package README covers it, and the README is a skeleton of empty
+headings.
+
+**One observation we could not reproduce, recorded as unresolved:** in a run
+where the prompt sat unanswered for over two minutes, a
+`blindSignTransactionFallback` step appeared after the wait. On the run where
+the transaction was declined promptly, it did not — the sequence went
+`signTransaction`, `detectBlindSigning`, then `6985`. So the fallback appears
+tied to a device-side timeout rather than to a decline, but we did not pin it
+down and are not claiming otherwise.

@@ -1,0 +1,20 @@
+{
+  "name": "@presign/hedera",
+  "version": "0.0.1",
+  "description": "Verifiable verdict journal on Hedera Consensus Service, and x402 payment for verdicts.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@hashgraph/sdk": "2.81.0",
+    "@presign/verdict-engine": "0.0.1"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@presign/service",
+  "version": "0.0.1",
+  "private": true,
+  "description": "x402-gated verdict service on Hedera: an agent pays per call, priced by the data the verdict actually buys.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "presign-service": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "tsc -b && node dist/bin.js",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@hashgraph/sdk": "2.81.0",
+    "@hono/node-server": "1.19.9",
+    "@presign/gateway": "0.0.1",
+    "@presign/hedera": "0.0.1",
+    "@presign/verdict-engine": "0.0.1",
+    "@x402/core": "2.25.0",
+    "@x402/fetch": "2.25.0",
+    "@x402/hedera": "2.25.0",
+    "@x402/hono": "2.25.0",
+    "hono": "4.13.7",
+    "@presign/operational-layer": "0.0.1",
+    "@presign/secrets": "0.0.1"
+  }
+}

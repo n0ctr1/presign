@@ -8,6 +8,7 @@ export {
   ProxyUpgradeIndex,
   SubstreamsError,
   toUpgradeRecord,
+  ETHEREUM_COMMON_SPKG,
   MAINNET_ENDPOINT,
   UPGRADED_TOPIC,
 } from "./proxy-upgrades.js";

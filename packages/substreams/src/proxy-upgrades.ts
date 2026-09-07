@@ -24,12 +24,27 @@ import {
   streamBlocks,
   unpackMapOutput,
 } from "@substreams/core";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { readPackageFromFile } from "@substreams/manifest";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
 /** `keccak256("Upgraded(address)")`, the EIP-1967 implementation-change event. */
 export const UPGRADED_TOPIC =
   "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b";
+
+/**
+ * The vendored `ethereum-common` package.
+ *
+ * Resolved relative to this module so consumers do not each keep a copy of a
+ * 439 KB binary, and so the path cannot drift from the package it belongs to.
+ */
+export const ETHEREUM_COMMON_SPKG = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "ethereum-common-v0.3.0.spkg",
+);
 
 /** StreamingFast's hosted Ethereum mainnet endpoint. */
 export const MAINNET_ENDPOINT = "https://mainnet.eth.streamingfast.io";
@@ -55,8 +70,8 @@ export class SubstreamsError extends Error {
 export interface ProxyUpgradeIndexOptions {
   /** Substreams API key. Exchanged for a JWT; not the Subgraph Studio key. */
   readonly apiKey: string;
-  /** Path to the `ethereum-common` package. */
-  readonly packagePath: string;
+  /** Path to the `ethereum-common` package. Defaults to the vendored copy. */
+  readonly packagePath?: string;
   readonly endpoint?: string;
   /** How far back to backfill, in blocks. Negative is relative to head. */
   readonly startBlock?: number;
@@ -126,6 +141,9 @@ export class ProxyUpgradeIndex {
   #lastBlockSeen: number | null = null;
   #blocks = 0;
   #abort = new AbortController();
+  #running = false;
+  #lastBlockAt: number | null = null;
+  #failure: string | null = null;
 
   readonly #options: ProxyUpgradeIndexOptions;
 
@@ -159,6 +177,33 @@ export class ProxyUpgradeIndex {
     return this.#firstBlockSeen;
   }
 
+  /**
+   * Whether the index is still watching.
+   *
+   * This is the difference between "no upgrade happened" and "we stopped
+   * looking an hour ago", and a consumer that cannot tell them apart will
+   * report a dead stream's silence as a clean history. Goes false when the
+   * stream ends, errors, or stalls past {@link stalenessToleranceMs}.
+   */
+  get live(): boolean {
+    if (!this.#running || this.#failure !== null) return false;
+    if (this.#lastBlockAt === null) return false;
+    return Date.now() - this.#lastBlockAt <= this.stalenessToleranceMs;
+  }
+
+  /**
+   * How long without a block before the index calls itself stale.
+   *
+   * Ethereum produces a block every twelve seconds or so; two minutes of
+   * silence is a stream that has stopped, not a quiet chain.
+   */
+  readonly stalenessToleranceMs = 120_000;
+
+  /** Why the stream stopped, when it stopped badly. */
+  get failure(): string | null {
+    return this.#failure;
+  }
+
   get stats(): {
     blocks: number;
     proxies: number;
@@ -174,6 +219,7 @@ export class ProxyUpgradeIndex {
   }
 
   stop(): void {
+    this.#running = false;
     this.#abort.abort();
   }
 
@@ -186,6 +232,22 @@ export class ProxyUpgradeIndex {
    * and a rule would read stale absence as evidence of no upgrade.
    */
   async run(stopBlock?: number): Promise<void> {
+    this.#running = true;
+    this.#failure = null;
+    try {
+      await this.#run(stopBlock);
+    } catch (error) {
+      // Recorded rather than only thrown: a caller that started the stream in
+      // the background would otherwise lose the reason, and the index would go
+      // on answering queries as though it were merely quiet.
+      this.#failure = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  async #run(stopBlock?: number): Promise<void> {
     const { token } = await authIssue(this.#options.apiKey).catch(
       (cause: unknown) => {
         throw new SubstreamsError(
@@ -197,7 +259,9 @@ export class ProxyUpgradeIndex {
       },
     );
 
-    const pkg = await readPackageFromFile(this.#options.packagePath);
+    const pkg = await readPackageFromFile(
+      this.#options.packagePath ?? ETHEREUM_COMMON_SPKG,
+    );
 
     /*
      * Parameters mutate the module definitions and must be applied before the
@@ -253,6 +317,7 @@ export class ProxyUpgradeIndex {
       this.#blocks += 1;
       this.#firstBlockSeen ??= block;
       this.#lastBlockSeen = block;
+      this.#lastBlockAt = Date.now();
 
       const output = unpackMapOutput(response, registry) as
         | { events?: StreamedEvent[] }

@@ -308,3 +308,35 @@ test("durations are written for a device screen, not a spreadsheet", () => {
   assert.equal(humanDuration(3 * 3600), "3.0 hours");
   assert.equal(humanDuration(72 * 3600), "3 days");
 });
+
+test("a stopped stream reports unavailable, not a clean history", async () => {
+  const dead = { lastUpgrade: () => null, watchedSince: 25_900_000, live: false };
+
+  const rule = new MutableLogicRule({ upgradeHistory: dead as never, now: () => NOW });
+  const outcome = (await rule.evaluate(context(proxyWorld))) as {
+    findings: readonly { evidence: Record<string, unknown> }[];
+  };
+  const history = outcome.findings[0]?.evidence["upgrade_history"] as Record<string, unknown>;
+
+  /*
+   * The failure this prevents: a stream that died an hour ago keeps answering
+   * "no upgrade seen", and the rule reports a quiet history for a contract it
+   * has not been watching. Silence from something that stopped listening is
+   * not evidence.
+   */
+  assert.equal(history["available"], false);
+  assert.match(String(history["reason"]), /not live/);
+});
+
+test("a source without a liveness signal is trusted, since it cannot go stale", async () => {
+  const staticHistory = { lastUpgrade: () => null, watchedSince: 25_900_000 };
+
+  const rule = new MutableLogicRule({ upgradeHistory: staticHistory as never, now: () => NOW });
+  const outcome = (await rule.evaluate(context(proxyWorld))) as {
+    findings: readonly { evidence: Record<string, unknown> }[];
+  };
+  const history = outcome.findings[0]?.evidence["upgrade_history"] as Record<string, unknown>;
+
+  assert.equal(history["available"], true);
+  assert.equal(history["upgrade_seen"], false);
+});

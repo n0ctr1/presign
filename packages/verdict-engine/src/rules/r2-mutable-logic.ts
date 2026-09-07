@@ -129,6 +129,15 @@ export interface UpgradeHistory {
   } | null;
   /** First block observed. Null before the stream has produced anything. */
   readonly watchedSince: number | null;
+  /**
+   * Whether the source is still watching.
+   *
+   * Optional, defaulting to true for sources that cannot go stale. When false,
+   * absence carries no information at all — a stopped stream's silence is not
+   * a clean history — so the rule reports the history as unavailable rather
+   * than reporting nothing found.
+   */
+  readonly live?: boolean;
 }
 
 export interface MutableLogicRuleOptions {
@@ -284,6 +293,16 @@ export class MutableLogicRule implements Rule {
       // Said plainly rather than omitted: a reader must be able to tell
       // "no upgrade seen" from "nobody was watching".
       return { evidence: { available: false }, finding: null };
+    }
+
+    if (history.live === false) {
+      return {
+        evidence: {
+          available: false,
+          reason: "upgrade stream is not live; its silence carries no information",
+        },
+        finding: null,
+      };
     }
 
     const last = history.lastUpgrade(address);

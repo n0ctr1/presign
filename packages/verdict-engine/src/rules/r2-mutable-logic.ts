@@ -62,6 +62,23 @@ const TIMELOCK_SELECTORS: readonly { selector: Hex; flavour: string }[] = [
  */
 const MEANINGFUL_DELAY_SECONDS = 24 * 60 * 60;
 
+/**
+ * A duration a person can read at a glance.
+ *
+ * This string lands on a hardware wallet screen, where the reader has seconds
+ * and no way to do arithmetic. "0.0 hours ago" is technically true of an
+ * upgrade 87 seconds old and tells them nothing; "1 minute ago" is the whole
+ * decision.
+ */
+export function humanDuration(seconds: number): string {
+  if (seconds < 90) return `${Math.max(0, Math.round(seconds))} seconds`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = seconds / 3600;
+  if (hours < 48) return `${hours.toFixed(1)} hours`;
+  return `${Math.round(hours / 24)} days`;
+}
+
 const ZERO_WORD =
   "0x0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -90,11 +107,49 @@ function upgradedInTransaction(
   return null;
 }
 
+/**
+ * When a proxy's implementation last changed.
+ *
+ * An interface rather than a concrete index, so this rule does not depend on
+ * Substreams — a deployment with no stream omits it and still gets every other
+ * check.
+ */
+export interface UpgradeHistory {
+  /**
+   * Most recent upgrade observed for a proxy, or null.
+   *
+   * Null covers two different situations — never upgraded, and upgraded before
+   * observation began — which is why {@link watchedSince} must be read
+   * alongside it.
+   */
+  lastUpgrade(proxy: Address): {
+    readonly block: number;
+    readonly timestamp: number;
+    readonly implementation: string;
+  } | null;
+  /** First block observed. Null before the stream has produced anything. */
+  readonly watchedSince: number | null;
+}
+
 export interface MutableLogicRuleOptions {
   /** Admins a caller has decided to trust, lowercased. */
   readonly allowlist?: Iterable<Address>;
   /** Minimum delay, in seconds, that counts as real protection. */
   readonly meaningfulDelaySeconds?: number;
+  /** Optional: when this proxy's logic last changed. */
+  readonly upgradeHistory?: UpgradeHistory;
+  /**
+   * How recently an upgrade must have landed to count as recent.
+   *
+   * Defaults to the same 24 hours used as the meaningful-timelock floor, and
+   * for the same reason: if a delay shorter than a day gives nobody time to
+   * react, then an upgrade inside that window is one nobody could have reacted
+   * to either. The two thresholds measure the same human latency from
+   * different sides.
+   */
+  readonly recentUpgradeSeconds?: number;
+  /** Injectable so tests do not depend on wall clock. */
+  readonly now?: () => Date;
 }
 
 export class MutableLogicRule implements Rule {
@@ -103,8 +158,15 @@ export class MutableLogicRule implements Rule {
 
   readonly #allowlist: ReadonlySet<string>;
   readonly #meaningfulDelay: number;
+  readonly #upgradeHistory: UpgradeHistory | undefined;
+  readonly #recentUpgradeSeconds: number;
+  readonly #now: () => Date;
 
   constructor(options: MutableLogicRuleOptions = {}) {
+    this.#upgradeHistory = options.upgradeHistory;
+    this.#recentUpgradeSeconds =
+      options.recentUpgradeSeconds ?? MEANINGFUL_DELAY_SECONDS;
+    this.#now = options.now ?? (() => new Date());
     this.#allowlist = new Set(
       [...(options.allowlist ?? [])].map((a) => a.toLowerCase()),
     );
@@ -121,6 +183,7 @@ export class MutableLogicRule implements Rule {
     const proxy = await this.#readProxy(context, address);
     if (proxy === null) return evaluated([]);
 
+    const history = this.#readUpgradeHistory(address);
     const findings: Finding[] = [];
 
     // An upgrade landing inside the transaction under judgement is not a
@@ -166,8 +229,10 @@ export class MutableLogicRule implements Rule {
           implementation: proxy.implementation,
           implementation_slot: proxy.implementationSlot,
           admin_slot_empty: true,
+          upgrade_history: history.evidence,
         },
       });
+      if (history.finding !== null) findings.push(history.finding);
       return evaluated(findings);
     }
 
@@ -192,10 +257,94 @@ export class MutableLogicRule implements Rule {
         admin_is_contract: control.isContract,
         timelock_flavour: control.flavour,
         timelock_delay_seconds: control.delaySeconds,
+        upgrade_history: history.evidence,
       },
     });
 
+    if (history.finding !== null) findings.push(history.finding);
+
     return evaluated(findings);
+  }
+
+  /**
+   * What the stream knows about this proxy's past upgrades.
+   *
+   * Returns evidence for every case and a finding only for a recent upgrade.
+   * Emitting a finding for "nothing seen" would attach an informational line
+   * to every verdict touching any proxy, which is most of them — the
+   * observation window belongs in evidence, where a reader can weigh it,
+   * rather than in the finding list, where it would be noise.
+   */
+  #readUpgradeHistory(address: Address): {
+    evidence: Readonly<Record<string, unknown>>;
+    finding: Finding | null;
+  } {
+    const history = this.#upgradeHistory;
+    if (history === undefined) {
+      // Said plainly rather than omitted: a reader must be able to tell
+      // "no upgrade seen" from "nobody was watching".
+      return { evidence: { available: false }, finding: null };
+    }
+
+    const last = history.lastUpgrade(address);
+    if (last === null) {
+      return {
+        evidence: {
+          available: true,
+          upgrade_seen: false,
+          watched_since_block: history.watchedSince,
+          // The distinction that keeps this honest.
+          note: "No upgrade observed in the watched window. This is not evidence that none occurred earlier.",
+        },
+        finding: null,
+      };
+    }
+
+    const secondsAgo = Math.max(
+      0,
+      Math.round(this.#now().getTime() / 1000) - last.timestamp,
+    );
+    const recent = secondsAgo <= this.#recentUpgradeSeconds;
+
+    const evidence = {
+      available: true,
+      upgrade_seen: true,
+      watched_since_block: history.watchedSince,
+      last_upgrade_block: last.block,
+      last_upgrade_implementation: last.implementation,
+      seconds_since_upgrade: secondsAgo,
+      recent,
+      derived_from: "substreams",
+    } as const;
+
+    if (!recent) return { evidence, finding: null };
+
+    const ago = humanDuration(secondsAgo);
+    return {
+      evidence,
+      finding: {
+        ruleId: this.id,
+        severity: "critical",
+        /*
+         * Still a standing property, so still capped at medium by policy.
+         *
+         * That cap is deliberate. Protocols upgrade routinely, and refusing
+         * every interaction with one that shipped a release this morning would
+         * block far more honest transactions than malicious ones. What a
+         * recent upgrade earns is a human looking at it — which is exactly
+         * what medium means — and the detail below is written to be read on a
+         * device screen, because that is where the decision gets made.
+         */
+        standing: true,
+        title: `Implementation changed ${ago} ago`,
+        detail:
+          `${address} was pointed at a new implementation ` +
+          `(${last.implementation}) at block ${last.block}, ${ago} ago. ` +
+          "Any review of this contract older than that describes code which is " +
+          "no longer running.",
+        evidence,
+      },
+    };
   }
 
   async #readProxy(

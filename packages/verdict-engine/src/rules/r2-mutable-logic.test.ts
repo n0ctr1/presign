@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   eip1967Slot,
+  humanDuration,
   EIP1967_ADMIN_SLOT,
   EIP1967_IMPLEMENTATION_SLOT,
   MutableLogicRule,
@@ -200,4 +201,110 @@ test("an empty admin slot is reported, not assumed immutable", async () => {
 
   assert.equal(findings[0]?.severity, "info");
   assert.equal(findings[0]?.evidence["admin_slot_empty"], true);
+});
+
+/** Minimal stand-in for the Substreams-backed index. */
+const historyWith = (
+  record: { block: number; timestamp: number; implementation: string } | null,
+  watchedSince: number | null = 25_900_000,
+) => ({ lastUpgrade: () => record, watchedSince });
+
+const NOW = new Date("2026-09-07T12:00:00Z");
+const secondsAgo = (s: number) => Math.round(NOW.getTime() / 1000) - s;
+
+const proxyWorld = {
+  storage: {
+    [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL),
+    [EIP1967_ADMIN_SLOT]: word(ADMIN),
+  },
+};
+
+async function findingsWithHistory(history: unknown) {
+  const rule = new MutableLogicRule({
+    upgradeHistory: history as never,
+    now: () => NOW,
+  });
+  const outcome = (await rule.evaluate(context(proxyWorld))) as {
+    status: string;
+    findings: readonly { severity: string; title: string; evidence: Record<string, unknown> }[];
+  };
+  assert.equal(outcome.status, "evaluated");
+  return outcome.findings;
+}
+
+test("a recent upgrade earns its own finding", async () => {
+  const findings = await findingsWithHistory(
+    historyWith({ block: 25_927_009, timestamp: secondsAgo(2 * 3600), implementation: IMPL }),
+  );
+
+  const upgrade = findings.find((f) => /Implementation changed/.test(f.title));
+  assert.ok(upgrade, "expected a recency finding");
+  assert.equal(upgrade.severity, "critical");
+  assert.match(upgrade.title, /2\.0 hours ago/);
+  // The detail is written for a device screen, where the human decides.
+  assert.match(upgrade.detail as never, /no longer running/);
+  assert.equal(upgrade.evidence["derived_from"], "substreams");
+});
+
+test("an old upgrade is evidence, not a finding", async () => {
+  const findings = await findingsWithHistory(
+    historyWith({ block: 25_000_000, timestamp: secondsAgo(40 * 3600), implementation: IMPL }),
+  );
+
+  assert.equal(findings.filter((f) => /Implementation changed/.test(f.title)).length, 0);
+  const history = findings[0]?.evidence["upgrade_history"] as Record<string, unknown>;
+  assert.equal(history["upgrade_seen"], true);
+  assert.equal(history["recent"], false);
+  assert.equal(history["seconds_since_upgrade"], 40 * 3600);
+});
+
+test("nothing seen is recorded as unknown, not as never", async () => {
+  const findings = await findingsWithHistory(historyWith(null));
+
+  const history = findings[0]?.evidence["upgrade_history"] as Record<string, unknown>;
+  assert.equal(history["upgrade_seen"], false);
+  assert.equal(history["watched_since_block"], 25_900_000);
+  // Absence within a window is not proof of absence.
+  assert.match(String(history["note"]), /not evidence that none occurred earlier/);
+});
+
+test("no stream configured is distinguishable from nothing seen", async () => {
+  const outcome = (await new MutableLogicRule().evaluate(context(proxyWorld))) as {
+    findings: readonly { evidence: Record<string, unknown> }[];
+  };
+
+  const history = outcome.findings[0]?.evidence["upgrade_history"] as Record<string, unknown>;
+  // A reader must be able to tell "no upgrade seen" from "nobody was watching".
+  assert.equal(history["available"], false);
+  assert.ok(!("upgrade_seen" in history));
+});
+
+test("history reaches the empty-admin case too", async () => {
+  const rule = new MutableLogicRule({
+    upgradeHistory: historyWith({
+      block: 25_927_009,
+      timestamp: secondsAgo(3600),
+      implementation: IMPL,
+    }) as never,
+    now: () => NOW,
+  });
+
+  const outcome = (await rule.evaluate(
+    context({ storage: { [EIP1967_IMPLEMENTATION_SLOT]: word(IMPL) } }),
+  )) as { findings: readonly { title: string }[] };
+
+  // Aave V3's shape: governance elsewhere, admin slot empty. The upgrade
+  // recency matters just as much there, so the early return must not skip it.
+  assert.ok(outcome.findings.some((f) => /Implementation changed/.test(f.title)));
+});
+
+
+test("durations are written for a device screen, not a spreadsheet", () => {
+  // An upgrade 87 seconds old rendered as "0.0 hours ago" says nothing to
+  // someone holding a hardware wallet. Observed live at 87 seconds.
+  assert.equal(humanDuration(87), "87 seconds");
+  assert.equal(humanDuration(200), "3 minutes");
+  assert.equal(humanDuration(60 * 60), "60 minutes");
+  assert.equal(humanDuration(3 * 3600), "3.0 hours");
+  assert.equal(humanDuration(72 * 3600), "3 days");
 });

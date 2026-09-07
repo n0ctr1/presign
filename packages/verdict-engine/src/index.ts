@@ -46,10 +46,12 @@ export {
   EIP1967_ADMIN_SLOT,
   EIP1967_BEACON_SLOT,
   EIP1967_IMPLEMENTATION_SLOT,
+  humanDuration,
   MutableLogicRule,
   ZEPPELINOS_ADMIN_SLOT,
   ZEPPELINOS_IMPLEMENTATION_SLOT,
   type MutableLogicRuleOptions,
+  type UpgradeHistory,
 } from "./rules/r2-mutable-logic.js";
 
 export {

@@ -24,10 +24,12 @@ import {
 } from "@presign/operational-layer";
 import {
   AnvilFork,
+  describeRpc,
   ForkSimulator,
   InvariantBreachRule,
   MutableLogicRule,
   OperationalProtocolContext,
+  resolveEthereumRpc,
   UnlimitedApprovalRule,
   VerdictEngine,
 } from "@presign/verdict-engine";
@@ -40,7 +42,6 @@ const SECRETS = join(homedir(), ".presign", "secrets");
 const readSecret = async (name: string) =>
   (await readFile(join(SECRETS, name), "utf8")).trim();
 
-const MAINNET_RPC = "https://ethereum-rpc.publicnode.com";
 
 async function main(): Promise<void> {
   const network = (process.env["HEDERA_NETWORK"] ?? "hedera:testnet") as HederaNetwork;
@@ -71,8 +72,18 @@ async function main(): Promise<void> {
   });
   console.log(`  topic ${journal.topicId} — ${journal.explorerUrl}`);
 
-  console.log("Starting mainnet fork for simulation…");
-  const fork = await AnvilFork.start({ forkUrl: MAINNET_RPC, port: 8545 });
+  const rpc = await resolveEthereumRpc();
+  console.log(`Starting mainnet fork for simulation — ${describeRpc(rpc)}`);
+  if (!rpc.archiveCapable) {
+    // Said once, loudly, at startup rather than discovered as a 503 by whoever
+    // paid for the verdict that could not be produced.
+    console.log(
+      "  WARNING: the public endpoint refuses archive reads, so simulation " +
+        "against a protocol contract will fail once the fork block ages. " +
+        `Put an archive URL in ~/.presign/secrets/ethereum__rpc-url.`,
+    );
+  }
+  const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
   const simulator = new ForkSimulator(fork.rpcUrl);
 
   const rules = () => [new UnlimitedApprovalRule(), new MutableLogicRule()];
@@ -102,7 +113,7 @@ async function main(): Promise<void> {
       conformance: new ConformanceProbe({ gateway }),
       liveness: new LivenessProbe({
         gateway,
-        chainHead: new JsonRpcChainHeadSource({ endpoints: { mainnet: MAINNET_RPC } }),
+        chainHead: new JsonRpcChainHeadSource({ endpoints: { mainnet: rpc.url } }),
       }),
       gateway,
     });

@@ -26,6 +26,13 @@ export { evaluated, TIER_ACTION } from "./types.js";
 
 export { AnvilFork, AnvilStartupError, type AnvilForkOptions } from "./simulation/fork.js";
 export { ForkSimulator, SimulationError } from "./simulation/simulator.js";
+export {
+  resolveEthereumRpc,
+  describeRpc,
+  PUBLIC_ETHEREUM_RPC,
+  RPC_SECRET_FILE,
+  type ResolvedRpc,
+} from "./simulation/rpc-url.js";
 
 export {
   addressCandidates,

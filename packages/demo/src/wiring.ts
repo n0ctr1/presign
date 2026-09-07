@@ -27,15 +27,16 @@ import {
 } from "@presign/secrets";
 import {
   AnvilFork,
+  describeRpc,
   ForkSimulator,
   InvariantBreachRule,
   MutableLogicRule,
   OperationalProtocolContext,
+  resolveEthereumRpc,
   UnlimitedApprovalRule,
   VerdictEngine,
 } from "@presign/verdict-engine";
 
-const MAINNET_RPC = "https://ethereum-rpc.publicnode.com";
 
 /** Minimal MCP client over stdio: three message shapes, no SDK needed. */
 class RegistrySubprocess implements RegistryToolCaller {
@@ -130,12 +131,17 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
       (await secrets.resolve({ scope: "the-graph", name: "studio-api-key" })).value,
   });
 
+  // Resolved before anything that needs it: both the fork and the chain-head
+  // source read from the same upstream.
+  const rpc = await resolveEthereumRpc();
+  console.log(`Fork upstream: ${describeRpc(rpc)}`);
+
   const registry = new RegistrySubprocess();
   const discovery = new SubgraphRegistrySource(registry);
   const conformance = new ConformanceProbe({ gateway });
   const liveness = new LivenessProbe({
     gateway,
-    chainHead: new JsonRpcChainHeadSource({ endpoints: { mainnet: MAINNET_RPC } }),
+    chainHead: new JsonRpcChainHeadSource({ endpoints: { mainnet: rpc.url } }),
   });
 
   // Warms candidates ahead of the request path. Not used by R3's
@@ -149,7 +155,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     gateway,
   });
 
-  const fork = await AnvilFork.start({ forkUrl: MAINNET_RPC, port: 8545 });
+  const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
   const simulator = new ForkSimulator(fork.rpcUrl);
   const forkBlock = (await simulator.simulate({
     from: "0x0000000000000000000000000000000000000001",

@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { buildConfig } from "./config.js";
 import { createServer } from "./server.js";
 
-const config = buildConfig();
+const config = await buildConfig();
 const server = createServer(config);
 
 // stdout is the transport. Anything written there that is not a JSON-RPC frame

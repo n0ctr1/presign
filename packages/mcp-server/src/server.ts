@@ -10,6 +10,13 @@
  * Every response carries provenance. A caller that cannot see which deployment
  * answered and how far behind it was cannot audit the answer, and an
  * unauditable freshness claim is worth about as much as no claim.
+ *
+ * The upgrade-history tools are the exception to "freshness-gated selection",
+ * and they are here for the same reason the rest is: they answer a question no
+ * subgraph can. When a proxy's implementation last changed is not a field in
+ * any schema — it is an event, and reading it needs a stream. A consumer of
+ * this server gets that history without holding a Substreams key or waiting
+ * out a backfill, which is the part that is actually reusable.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -98,6 +105,69 @@ function serializeResolution(
     guidance:
       "Treat as unavailable, never as low risk. A verdict computed without fresh protocol context must not be green.",
     rejected: resolution.rejected.map((r) => serializeRecord(r, now)),
+  };
+}
+
+/** One implementation swap, as the stream observed it. */
+export interface UpgradeRecordView {
+  readonly proxy: string;
+  readonly implementation: string;
+  readonly block: number;
+  readonly timestamp: number;
+  readonly txHash: string;
+}
+
+/**
+ * The proxy upgrade stream, narrowed to what this server reads.
+ *
+ * `@presign/substreams`'s index satisfies it structurally, so nothing here
+ * depends on how the history is produced — a caller replaying upgrades from a
+ * log file into the same shape gets the same tools.
+ */
+export interface UpgradeHistorySource {
+  lastUpgrade(proxy: string): UpgradeRecordView | null;
+  recent(limit: number): readonly UpgradeRecordView[];
+  readonly watchedSince: number | null;
+  readonly live: boolean;
+  readonly failure: string | null;
+  readonly stats: {
+    readonly blocks: number;
+    readonly proxies: number;
+    readonly firstBlock: number | null;
+    readonly lastBlock: number | null;
+  };
+}
+
+function serializeUpgrade(record: UpgradeRecordView, now: Date) {
+  const observedAt = new Date(record.timestamp * 1000);
+  return {
+    proxy: record.proxy,
+    implementation: record.implementation,
+    block: record.block,
+    observed_at: observedAt.toISOString(),
+    age_seconds: Number(((now.getTime() - observedAt.getTime()) / 1000).toFixed(1)),
+    transaction_hash: record.txHash,
+  };
+}
+
+/**
+ * The watched window, attached to every upgrade-history answer.
+ *
+ * This is the whole honesty of these two tools. The index knows only what it
+ * has seen since it started, so "no upgrade recorded" covers two situations a
+ * caller must not conflate: the proxy has never been upgraded, and the proxy
+ * was upgraded before anyone started watching. Reporting the window turns an
+ * unfalsifiable "clean" into a checkable "clean since block N" — and when the
+ * stream is not live, the answer carries no information at all.
+ */
+function serializeSource(history: UpgradeHistorySource) {
+  return {
+    live: history.live,
+    failure: history.failure,
+    watched_since_block: history.watchedSince,
+    watched_blocks: history.stats.blocks,
+    proxies_seen: history.stats.proxies,
+    last_block: history.stats.lastBlock,
   };
 }
 
@@ -288,6 +358,71 @@ export function createServer(config: ServerConfig, now: () => Date = () => new D
           "Only rules needing indexed protocol data appear here. Approval and proxy-mutability rules read calldata, simulated state diffs and storage slots, so they have no indexed-data requirement.",
       }),
   );
+
+  /*
+   * Registered only when a stream is actually running.
+   *
+   * The same rule the paid service follows: a capability that cannot be served
+   * is not advertised. A tool that exists and always answers "no history"
+   * would be worse than its absence, because a caller has no way to tell that
+   * from a proxy with a genuinely clean record.
+   */
+  const history = config.upgrades;
+  if (history !== undefined) {
+    server.registerTool(
+      "check_proxy_upgrade_history",
+      {
+        title: "Check proxy upgrade history",
+        description:
+          "When a proxy's implementation last changed, from a live event stream rather than a subgraph. No schema carries this: an upgrade is an event, and current state cannot say when it happened. Read `source.watched_since_block` with the answer — a null upgrade means either never upgraded or upgraded before watching began, and when `source.live` is false the answer carries no information at all.",
+        inputSchema: {
+          address: z.string().describe("Proxy contract address, 0x-prefixed."),
+        },
+      },
+      ({ address }) => {
+        const proxy = address.toLowerCase();
+        const last = history.lastUpgrade(proxy);
+        return json({
+          proxy,
+          upgraded: last !== null,
+          last_upgrade: last === null ? null : serializeUpgrade(last, now()),
+          source: serializeSource(history),
+          guidance:
+            last !== null
+              ? "An implementation that changed recently invalidates any review of the previous code. Weigh how recently against how long a human would need to notice."
+              : "Absence is bounded by the watched window, not by the contract's lifetime. Treat it as 'no upgrade since watching began', never as 'never upgraded'.",
+        });
+      },
+    );
+
+    server.registerTool(
+      "list_recent_upgrades",
+      {
+        title: "List recent proxy upgrades",
+        description:
+          "Proxies whose implementation changed most recently, newest first, across everything the stream has watched. One row per proxy: the most recent change, not every change. Useful for deciding what to look at without running a stream of your own.",
+        inputSchema: {
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .default(20)
+            .describe("Maximum rows to return."),
+        },
+      },
+      ({ limit }) => {
+        const at = now();
+        return json({
+          upgrades: history.recent(limit).map((r) => serializeUpgrade(r, at)),
+          source: serializeSource(history),
+          // Said explicitly because a short list reads as a quiet chain, and
+          // a caller who does not know the window will draw that conclusion.
+          note: "Covers only the watched window in `source`, which begins when this server started streaming — not the whole chain.",
+        });
+      },
+    );
+  }
 
   return server;
 }

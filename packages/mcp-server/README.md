@@ -29,6 +29,20 @@ addresses or sign anything.
 | `check_deployment_freshness` | Lag from chain head for one deployment |
 | `check_deployment_conformance` | Which named fields a deployment actually answers |
 | `list_rule_requirements` | Rules, families, fields, default budgets |
+| `check_proxy_upgrade_history` | When a proxy's implementation last changed |
+| `list_recent_upgrades` | Proxies whose logic changed most recently |
+
+The last two come from a live event stream rather than a subgraph, because no
+schema carries them: an upgrade is an event, and current state can only say
+what the implementation is now, never when it became that. They are registered
+**only when a Substreams key is configured** — a tool that always answered "no
+history" would be indistinguishable from a proxy with a genuinely clean
+record.
+
+Their answers carry a `source` block with the watched window and whether the
+stream is still live, and both must be read with it. "No upgrade recorded"
+means *no upgrade since watching began*, and from a stopped stream it means
+nothing at all.
 
 ## The contract that matters
 
@@ -57,10 +71,17 @@ rule they are entitled to ask about.
 
 ## Configuration
 
-Studio API key, resolved strongest-first:
+Studio API key, and optionally a Substreams key for the upgrade-history tools,
+resolved strongest-first:
 
 1. `~/.presign/secrets/the-graph__studio-api-key`, mode `0600`
 2. `THE_GRAPH_STUDIO_API_KEY`
+
+The upgrade-history tools additionally need a Substreams key, from
+`~/.presign/secrets/substreams__api-key` or `SUBSTREAMS_API_KEY`. Note that a
+Subgraph Studio key is **not** a Substreams key: the auth exchange rejects one
+with a bare `400`. Without it the server starts normally and simply does not
+register those two tools.
 
 Chain head comes from public RPC endpoints carrying no credentials. That is
 deliberate: chain head must be obtainable independently of the indexer, so it

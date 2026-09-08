@@ -6,4 +6,8 @@
  */
 
 export { buildConfig, type BuildConfigOptions, type ServerConfig } from "./config.js";
-export { createServer } from "./server.js";
+export {
+  createServer,
+  type UpgradeHistorySource,
+  type UpgradeRecordView,
+} from "./server.js";

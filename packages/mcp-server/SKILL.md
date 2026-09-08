@@ -1,6 +1,6 @@
 ---
 name: presign-data-freshness
-description: Decide whether indexed protocol data is fresh enough to act on before signing a transaction. Answers "which deployments can serve this rule right now, and how stale is each one". Use when selecting a subgraph deployment to read protocol state from, when a decision depends on data being current, or when you need to justify a risk verdict with data provenance. Not a transaction scanner and not a signer.
+description: Decide whether indexed protocol data is fresh enough to act on before signing a transaction. Answers "which deployments can serve this rule right now, and how stale is each one", and "when did this proxy's implementation last change" from a live event stream. Use when selecting a subgraph deployment to read protocol state from, when a decision depends on data being current, when you need to know whether a contract's logic was swapped recently, or when you need to justify a risk verdict with data provenance. Not a transaction scanner and not a signer.
 ---
 
 # Freshness-gated data selection
@@ -91,6 +91,44 @@ declared and still fail at execution.
 
 The catalogue: rules, families, fields, default budgets.
 
+### `check_proxy_upgrade_history`
+
+```json
+{ "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" }
+```
+
+When a proxy's implementation last changed. **No subgraph can answer this** —
+an upgrade is an event, and current state cannot say when it happened, only
+what the implementation is now. This comes from a live event stream, so you
+get the history without holding a Substreams key or waiting out a backfill.
+
+Read the answer together with `source`, never alone:
+
+| `source.live` | `last_upgrade` | What you may conclude |
+|---|---|---|
+| `true` | an upgrade | The logic changed at that block. Any review of the previous code is void. |
+| `true` | `null` | No upgrade **since `watched_since_block`**. Nothing about before that. |
+| `false` | anything | Nothing. A stopped stream's silence is not a clean history. |
+
+The third row is the one that catches people. A stream that died an hour ago
+still answers, still returns rows it collected before it stopped, and looks
+exactly like a healthy one to any caller that reads only `last_upgrade`.
+
+### `list_recent_upgrades`
+
+```json
+{ "limit": 20 }
+```
+
+Proxies whose implementation changed most recently, newest first, one row per
+proxy. Use it to decide what to look at when you have no specific transaction
+in hand. Bounded by the same watched window, and the same `source` rules apply.
+
+Both tools are **absent unless a stream is running**. If you do not see them in
+the tool list, this installation has no Substreams key — that is deliberate,
+because a tool that always answered "no history" would be indistinguishable
+from a proxy with a genuinely clean record.
+
 ## Choosing a freshness budget
 
 The default is 30 s, roughly two Ethereum blocks. Tighter and honest
@@ -110,7 +148,8 @@ behind head at 12:31:07Z". Only the second can be checked by anyone else.
 ## What this does not do
 
 It does not simulate transactions, decode calldata, score addresses, detect
-exploits or sign anything. It selects and grades data sources. Whatever rules
+exploits or sign anything. It selects and grades data sources, and reports one
+thing state cannot tell you — when a proxy's logic last changed. Whatever rules
 you run on top of the data are yours.
 
 ## Setup

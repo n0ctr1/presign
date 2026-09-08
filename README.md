@@ -147,9 +147,10 @@ This section tracks what is actually running, not what is planned.
 | Liveness probe (`_meta` vs chain head) | done — verified against live mainnet |
 | Conformance probe (introspection + probe query) | done — verified against live mainnet |
 | Capability binding + warm cache | done — verified against live mainnet |
-| MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
+| MCP server + `SKILL.md` | done — 7 tools, verified over stdio |
 | Fork simulation + rules R1-R3 | done — verified against live mainnet fork |
 | R4 unidentified counterparty + EIP-7702 delegation | done — verified against live mainnet |
+| Proxy upgrade history over MCP | done — verified against a live stream |
 | Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
 | x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
 | x402 outbound (The Graph on Base) | not started |

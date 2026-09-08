@@ -15,8 +15,14 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md", "SKILL.md"],
-  "engines": { "node": ">=22.0.0" },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "build": "tsc -b",
     "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
@@ -25,6 +31,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@presign/operational-layer": "0.0.1",
     "@presign/secrets": "0.0.1",
+    "@presign/substreams": "0.0.1",
     "zod": "3.25.76"
   }
 }

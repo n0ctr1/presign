@@ -28,6 +28,22 @@ import {
   type SecretRef,
 } from "@presign/secrets";
 
+/**
+ * How long a registry call may take before it is treated as a failure.
+ *
+ * Without this a dead subprocess is indistinguishable from a slow one: the
+ * promise for its reply is never settled by anything, so a caller waits for a
+ * process that will never answer. Observed exactly once and it cost an hour —
+ * a run that had finished its work sat in `ep_poll` with no children, no
+ * output and no error, looking like a hang in code that had already done its
+ * job.
+ *
+ * Fifteen seconds is generous for a local subprocess answering from its own
+ * cache, and short enough that a service refuses a verdict rather than holding
+ * a connection open until the caller gives up.
+ */
+const REGISTRY_TIMEOUT_MS = 15_000;
+
 const STUDIO_KEY: SecretRef = { scope: "the-graph", name: "studio-api-key" };
 const SUBSTREAMS_KEY: SecretRef = { scope: "substreams", name: "api-key" };
 
@@ -114,10 +130,29 @@ class RegistrySubprocess implements RegistryToolCaller {
     }
   }
 
+  /**
+   * Send one JSON-RPC message and wait for its reply.
+   *
+   * Rejects on timeout rather than resolving with nothing, because the two
+   * mean different things to every caller above: a rule that gets `undefined`
+   * reports "nothing indexes this contract", which is a claim about the chain,
+   * while a rejection reports that we could not ask — and only the second is
+   * allowed to become `unavailable` instead of a clean verdict.
+   */
   #send(method: string, params?: unknown): Promise<unknown> {
     const id = ++this.#nextId;
-    return new Promise((resolve) => {
-      this.#pending.set(id, resolve);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`registry did not answer ${method} within ${REGISTRY_TIMEOUT_MS}ms`));
+      }, REGISTRY_TIMEOUT_MS);
+      // `unref` so a pending call cannot by itself keep the process alive.
+      timer.unref?.();
+
+      this.#pending.set(id, (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
       this.#child.stdin.write(
         `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
       );

@@ -15,10 +15,52 @@ export interface RegistryClient extends RegistryToolCaller {
   close(): void;
 }
 
-export function buildRegistryClient(): RegistryClient {
+/**
+ * How long a registry call may take before it counts as a failure.
+ *
+ * Without a deadline a dead subprocess is indistinguishable from a slow one:
+ * nothing ever settles the promise for its reply, so the caller waits for a
+ * process that will never answer. A paid service must not do that — it holds
+ * the caller's connection open while their payment sits in limbo, and no error
+ * ever reaches them.
+ *
+ * Rejecting rather than resolving with nothing matters just as much. A rule
+ * handed an empty answer reports "nothing indexes this contract", a claim
+ * about the chain; a rejection reports that we could not ask, and only the
+ * second is allowed to become `unavailable`.
+ */
+const REGISTRY_TIMEOUT_MS = 15_000;
+
+export interface RegistryClientOptions {
+  /** Executable that speaks the registry's MCP server over stdio. */
+  readonly command?: string;
+  readonly args?: readonly string[];
+}
+
+/**
+ * Default to fetching the registry with npx.
+ *
+ * Right on a developer's machine and wrong in a container, where `npx -y`
+ * would reach the network on first use and fail the first verdict rather than
+ * the build. An image installs the package and points these at the binary, so
+ * the registry is present before anything asks it a question.
+ */
+const DEFAULT_COMMAND = "npx";
+const DEFAULT_ARGS = ["-y", "subgraph-registry-mcp"] as const;
+
+export function buildRegistryClient(
+  options: RegistryClientOptions = {},
+): RegistryClient {
+  const command = options.command ?? process.env["REGISTRY_COMMAND"] ?? DEFAULT_COMMAND;
+  const args =
+    options.args ??
+    (process.env["REGISTRY_ARGS"] === undefined
+      ? DEFAULT_ARGS
+      : process.env["REGISTRY_ARGS"].split(" ").filter((a) => a !== ""));
+
   const child: ChildProcessByStdio<Writable, Readable, null> = spawn(
-    "npx",
-    ["-y", "subgraph-registry-mcp"],
+    command,
+    [...args],
     { stdio: ["pipe", "pipe", "ignore"] },
   );
   child.stdout.setEncoding("utf8");
@@ -49,8 +91,20 @@ export function buildRegistryClient(): RegistryClient {
 
   const send = (method: string, params?: unknown): Promise<unknown> => {
     const id = ++nextId;
-    return new Promise((resolve) => {
-      pending.set(id, resolve);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(
+          new Error(`registry did not answer ${method} within ${REGISTRY_TIMEOUT_MS}ms`),
+        );
+      }, REGISTRY_TIMEOUT_MS);
+      // Unreffed so one pending call cannot hold the process open by itself.
+      timer.unref?.();
+
+      pending.set(id, (message) => {
+        clearTimeout(timer);
+        resolve(message);
+      });
       child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
   };

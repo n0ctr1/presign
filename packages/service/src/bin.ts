@@ -8,12 +8,16 @@
  * topic for the journal, starts a mainnet fork for simulation, and listens.
  */
 
-import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { serve } from "@hono/node-server";
 import { PresignPipeline } from "@presign/gateway";
+import {
+  EnvSecretSource,
+  FileSecretSource,
+  SecretResolver,
+} from "@presign/secrets";
 import { HcsVerdictJournal } from "@presign/hedera";
 import {
   chooseFunding,
@@ -45,9 +49,37 @@ import { ProxyUpgradeIndex } from "@presign/substreams";
 import { createApp, type HederaNetwork } from "./app.js";
 import { readTopicId, writeTopicId } from "./state.js";
 
-const SECRETS = join(homedir(), ".presign", "secrets");
-const readSecret = async (name: string) =>
-  (await readFile(join(SECRETS, name), "utf8")).trim();
+/**
+ * Secrets, through the resolver this project ships rather than around it.
+ *
+ * The service used to read files directly, which works on a laptop and not in
+ * a container, where the only sane way to hand a process a credential is the
+ * environment. `SecretResolver` already answers both — file first so a
+ * developer's `~/.presign/secrets` wins locally, environment second so a
+ * deployment can inject them — and it reports which source answered, which is
+ * the whole point of the package. A service that bypasses its own secret
+ * handling to call `readFile` is not a good advertisement for it.
+ *
+ * The `scope__name` file convention maps to `{ scope, name }`, and the
+ * environment variable is `SCOPE_NAME` upper-cased, so
+ * `the-graph__studio-api-key` is `THE_GRAPH_STUDIO_API_KEY`.
+ */
+const secrets = new SecretResolver([
+  new FileSecretSource(
+    process.env["PRESIGN_SECRETS_DIR"] ?? join(homedir(), ".presign", "secrets"),
+  ),
+  new EnvSecretSource(),
+]);
+
+const readSecret = async (fileName: string): Promise<string> => {
+  const separator = fileName.indexOf("__");
+  if (separator < 0) throw new RangeError(`secret name must be scope__name: ${fileName}`);
+  const resolved = await secrets.resolve({
+    scope: fileName.slice(0, separator),
+    name: fileName.slice(separator + 2),
+  });
+  return resolved.value;
+};
 
 
 async function main(): Promise<void> {

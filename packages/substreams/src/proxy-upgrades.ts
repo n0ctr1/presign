@@ -82,6 +82,32 @@ export interface ProxyUpgradeIndexOptions {
 const toHex = (bytes: Uint8Array | undefined): string =>
   `0x${Buffer.from(bytes ?? new Uint8Array()).toString("hex")}`;
 
+/**
+ * Transaction hash as the stream delivers it.
+ *
+ * The log's address and topics arrive as raw bytes. `txHash` does not: it
+ * arrives as the ASCII *text* of the hex digits, so putting it through
+ * {@link toHex} with the others encodes it a second time. The result is a
+ * 128-character string that looks like a hash, is accepted everywhere a hash
+ * is accepted, and matches no transaction on any chain — the ASCII of a real
+ * hash rather than the hash itself.
+ *
+ * That makes it the worst kind of evidence: plausible in a response, and
+ * dead on an explorer. A verdict's whole claim is that a reader can check it,
+ * so a hash nobody can look up is worse than no hash at all.
+ *
+ * Both encodings are handled rather than the one observed, because which one
+ * arrives is a property of the upstream module and not of anything here.
+ */
+function toTxHash(bytes: Uint8Array | undefined): string {
+  if (bytes === undefined || bytes.length === 0) return "0x";
+  const text = Buffer.from(bytes).toString("utf8");
+  if (/^(0x)?[0-9a-f]{64}$/i.test(text)) {
+    return `0x${text.replace(/^0x/i, "").toLowerCase()}`;
+  }
+  return toHex(bytes);
+}
+
 /** Last 20 bytes of a 32-byte topic word, which is where an address sits. */
 const topicToAddress = (bytes: Uint8Array | undefined): string =>
   `0x${Buffer.from(bytes ?? new Uint8Array()).toString("hex").slice(-40)}`;
@@ -121,7 +147,7 @@ export function toUpgradeRecord(
     implementation: topicToAddress(event.log?.topics?.[1]),
     block,
     timestamp,
-    txHash: toHex(event.txHash),
+    txHash: toTxHash(event.txHash),
   };
 }
 
@@ -170,6 +196,26 @@ export class ProxyUpgradeIndex {
   /** The most recent upgrade seen for a proxy, or null if none was seen. */
   lastUpgrade(proxy: string): UpgradeRecord | null {
     return this.#upgrades.get(proxy.toLowerCase()) ?? null;
+  }
+
+  /**
+   * The most recently upgraded proxies, newest first.
+   *
+   * The index already holds one record per proxy, so this is a view rather
+   * than a second store. It exists because "which contracts changed their
+   * logic lately" is a question worth answering to callers who are not
+   * evaluating a specific transaction — a monitor, or an agent deciding what
+   * to look at — and answering it from this index costs them nothing, while
+   * running the stream themselves costs a Substreams key and a backfill.
+   *
+   * Carries no liveness of its own on purpose: a caller must read
+   * {@link live} alongside it, because an empty or short list from a stopped
+   * stream means nothing at all.
+   */
+  recent(limit = 20): readonly UpgradeRecord[] {
+    return [...this.#upgrades.values()]
+      .sort((a, b) => b.block - a.block)
+      .slice(0, Math.max(0, limit));
   }
 
   /** First block this index observed. Null before the stream produces data. */

@@ -118,3 +118,63 @@ test("tracks the watched window so absence can be interpreted", () => {
   assert.equal(idx.stats.lastBlock, 500);
   assert.equal(idx.stats.proxies, 2);
 });
+
+test("recent upgrades come back newest first, one row per proxy", () => {
+  const index = ProxyUpgradeIndex.create({ apiKey: "k" });
+  const upgrade = (proxy: string, block: number) => ({
+    proxy,
+    implementation: `0x${block.toString(16).padStart(40, "0")}`,
+    block,
+    timestamp: 1_700_000_000 + block,
+    txHash: `0x${block.toString(16)}`,
+  });
+
+  index.record(upgrade("0xaaa", 100));
+  index.record(upgrade("0xbbb", 300));
+  index.record(upgrade("0xccc", 200));
+  // A second upgrade of the same proxy replaces the first: the index answers
+  // "when did this last change", not "every change ever seen".
+  index.record(upgrade("0xaaa", 400));
+
+  assert.deepEqual(
+    index.recent().map((r) => r.block),
+    [400, 300, 200],
+  );
+  assert.deepEqual(index.recent(2).map((r) => r.proxy), ["0xaaa", "0xbbb"]);
+});
+
+/*
+ * The stream delivers `txHash` as the ASCII text of the hex digits, while the
+ * log's address and topics arrive as raw bytes. Encoding the text a second
+ * time yields a 128-character string that looks like a hash and matches no
+ * transaction anywhere — observed live, then confirmed by decoding it and
+ * finding the real transaction on mainnet at the recorded block.
+ */
+const HASH = "7dd050139fd90563362d87e58d5e16a28edcd5a56e3af55c65c52b5bd2630cc1";
+
+const eventWithHash = (txHash: Uint8Array): StreamedEvent => ({
+  ...upgradeEvent,
+  txHash,
+});
+
+test("a hash delivered as ascii hex is not encoded a second time", () => {
+  const record = toUpgradeRecord(
+    eventWithHash(Buffer.from(HASH, "utf8")),
+    25_928_257,
+    1_788_000_000,
+  );
+
+  assert.equal(record?.txHash, `0x${HASH}`);
+});
+
+test("a hash delivered as raw bytes still encodes correctly", () => {
+  const record = toUpgradeRecord(
+    eventWithHash(Buffer.from(HASH, "hex")),
+    25_928_257,
+    1_788_000_000,
+  );
+
+  // Which encoding arrives is the upstream module's business, not ours, so
+  // both have to land on the same hash.
+  assert.equal(record?.txHash, `0x${HASH}`);
+});

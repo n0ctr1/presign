@@ -183,3 +183,52 @@ and cut the probe cost proportionally.
 **Worth noting on the positive side:** five real lending protocols answered
 one rule with zero per-protocol code, which is the whole argument for binding
 rules to schema families rather than to protocols.
+
+---
+
+## 2026-09-08 — `txHash` and log fields disagree about encoding in `ethereum_common`
+
+**Doing:** exposing our proxy-upgrade stream over MCP, so a consumer can ask
+when a contract's implementation last changed without running a Substreams
+stream themselves. First time the transaction hash reached a response body
+rather than only an internal index.
+
+**Found:** within one `StreamedEvent` from the `ethereum_common` spkg, fields
+carry two different encodings. `log.address` and `log.topics[]` arrive as raw
+bytes. `txHash` arrives as the **ASCII text of the hex digits** — the byte
+sequence `0x37 0x64 0x64 …`, which is the string `"7dd050…"`, not the 32 bytes
+it names.
+
+The consequence is quiet. Hex-encoding every field uniformly, which is the
+obvious thing to write and the thing that is correct for the log fields, turns
+the hash into 128 characters:
+
+```
+0x37646430353031333966643930353633333632643837653538643565313661323865...
+```
+
+That is well-formed, passes any length-agnostic validation, and matches no
+transaction on any chain. Decoding it as ASCII gives
+`0x7dd050139fd90563362d87e58d5e16a28edcd5a56e3af55c65c52b5bd2630cc1`, which is
+a real mainnet transaction whose `to` is exactly the proxy in the event and
+whose block is exactly the block recorded — so the data was right and only its
+encoding was wrong.
+
+**Impact:** we shipped this hash as evidence attached to R2's findings. A
+verdict's entire claim here is that a reader can go and check it; a hash that
+looks valid and resolves to nothing is worse than omitting the field, because
+it fails only at the moment someone tries to verify. It survived because our
+tests constructed events with raw bytes for every field — the same uniform
+assumption the bug comes from — so nothing disagreed until we read a real one.
+
+**Suggestion:** make the encoding uniform within the event, or if `txHash` is
+intentionally a string, type it as one. A consumer has no way to discover this
+from the message shape: both fields are bytes on the wire, and only the
+content distinguishes them. A line in the spkg documentation naming which
+fields are text would also have caught it.
+
+**Worth noting on the positive side:** the stream itself has been solid. Once
+`applyParams` was used instead of `createRequest`, it has run for hours at
+chain head without a stall — 410 blocks and 199 distinct proxies during this
+session's MCP check, and the upgrade a rule caught 87 seconds after it landed
+is still the single most convincing thing this project demonstrates.

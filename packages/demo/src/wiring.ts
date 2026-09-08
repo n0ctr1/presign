@@ -6,11 +6,9 @@
  * reproducing the project asks first.
  */
 
-import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Readable, Writable } from "node:stream";
 
 import {
   ConformanceProbe,
@@ -20,8 +18,8 @@ import {
   LivenessProbe,
   PaymentLedger,
   SubgraphRegistrySource,
-  type RegistryToolCaller,
 } from "@presign/operational-layer";
+import { RegistrySubprocess } from "./registry-client.js";
 import {
   EnvSecretSource,
   FileSecretSource,
@@ -42,76 +40,6 @@ import {
   VerdictEngine,
 } from "@presign/verdict-engine";
 
-
-/** Minimal MCP client over stdio: three message shapes, no SDK needed. */
-class RegistrySubprocess implements RegistryToolCaller {
-  readonly #child: ChildProcessByStdio<Writable, Readable, null>;
-  readonly #pending = new Map<number, (message: unknown) => void>();
-  #buffer = "";
-  #nextId = 0;
-  readonly #ready: Promise<void>;
-
-  constructor() {
-    this.#child = spawn("npx", ["-y", "subgraph-registry-mcp"], {
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-    this.#child.stdout.setEncoding("utf8");
-    this.#child.stdout.on("data", (chunk: string) => {
-      this.#buffer += chunk;
-      for (;;) {
-        const newline = this.#buffer.indexOf("\n");
-        if (newline < 0) break;
-        const line = this.#buffer.slice(0, newline).trim();
-        this.#buffer = this.#buffer.slice(newline + 1);
-        if (line === "") continue;
-        try {
-          const message = JSON.parse(line) as { id?: number };
-          if (typeof message.id === "number") {
-            this.#pending.get(message.id)?.(message);
-            this.#pending.delete(message.id);
-          }
-        } catch {
-          // The registry writes progress lines alongside JSON-RPC frames.
-        }
-      }
-    });
-    this.#ready = this.#handshake();
-  }
-
-  #send(method: string, params?: unknown): Promise<unknown> {
-    const id = ++this.#nextId;
-    return new Promise((resolve) => {
-      this.#pending.set(id, resolve);
-      this.#child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
-      );
-    });
-  }
-
-  async #handshake(): Promise<void> {
-    await this.#send("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "presign-demo", version: "0.0.1" },
-    });
-    this.#child.stdin.write(
-      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-    );
-  }
-
-  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    await this.#ready;
-    const response = (await this.#send("tools/call", {
-      name,
-      arguments: args,
-    })) as { result?: unknown };
-    return response.result;
-  }
-
-  close(): void {
-    this.#child.kill();
-  }
-}
 
 export interface Wiring {
   readonly engine: VerdictEngine;
@@ -205,7 +133,18 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
   // read, and this is the one URL in the process known to serve those.
   const origin = new RpcContractOrigin({ url: rpc.url });
 
-  const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
+  /*
+   * The fork's port is configurable because more than one harness now wants a
+   * fork: the scenarios, the false-positive fixture and the latency
+   * measurement. A fixed 8545 meant the second one to start found the port
+   * taken, failed to bind, and then reported `ECONNREFUSED` against a fork it
+   * had never managed to open — a message that describes the symptom and
+   * hides the cause.
+   */
+  const fork = await AnvilFork.start({
+    forkUrl: rpc.url,
+    port: Number(process.env["ANVIL_PORT"] ?? 8545),
+  });
   // No refresh: the demo runs for a couple of minutes, and a fixed block
   // keeps every scenario comparable against the same state.
   const simulator = new ForkSimulator(fork.rpcUrl);

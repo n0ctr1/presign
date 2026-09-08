@@ -13,7 +13,10 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "demo": "tsc -b && node dist/bin.js"
+    "demo": "tsc -b && node dist/bin.js",
+    "safety": "tsc -b && node dist/safety.js",
+    "latency": "tsc -b && node dist/latency.js",
+    "coverage": "tsc -b && node dist/coverage.js"
   },
   "dependencies": {
     "@hono/node-server": "1.19.6",

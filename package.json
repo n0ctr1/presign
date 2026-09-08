@@ -16,7 +16,10 @@
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
-    "demo": "npm run build && node packages/demo/dist/bin.js"
+    "demo": "npm run build && node packages/demo/dist/bin.js",
+    "safety": "npm run build && node packages/demo/dist/safety.js",
+    "latency": "npm run build && node packages/demo/dist/latency.js",
+    "coverage": "npm run build && node packages/demo/dist/coverage.js"
   },
   "devDependencies": {
     "@types/node": "22.13.5",

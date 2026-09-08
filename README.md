@@ -155,9 +155,68 @@ This section tracks what is actually running, not what is planned.
 | x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
 | x402 outbound (The Graph on Base) | done — real paid queries settled on Base, verified on-chain |
 
-Measured against live mainnet on 2026-09-05: liveness 173 ms, conformance
-394 ms, warming R3 across six lending candidates 611 ms, cached resolve
-sub-millisecond.
+### Measured
+
+Component timings against live mainnet: liveness 173 ms, conformance 394 ms,
+warming R3 across six lending candidates 611 ms, cached resolve
+sub-millisecond. Those are parts, and the sum of parts is not a latency claim,
+so `npm run latency` times whole verdicts instead:
+
+| counterparty | cold | warm p50 | what it pays for |
+|---|---|---|---|
+| Aave V3 Pool | 701 ms | 79 ms | R3 discovers, probes and queries |
+| USDC | 394 ms | 8 ms | R1, R2, and a counterparty R3 cannot speak for |
+| freshly deployed contract | 952 ms | 5 ms | R4 bisects historical `eth_getCode` |
+| Uniswap V3 Factory | 3356 ms | 3004 ms | the slow end — see below |
+
+Cold is the first verdict for that counterparty; warm is the repeats after it.
+The one-second budget holds everywhere except the last row, and that row is
+kept in deliberately. The Uniswap V3 mainnet subgraph answers R3's data query
+in 5.2–6.3 seconds while sitting four seconds behind chain head: current, and
+slower than we are willing to wait, so the verdict is `unavailable`. Raising
+the limit to accommodate it cost a cold USDC verdict 306 ms → 7.7 s, because a
+slow deployment indexing USDC then spends most of the budget before R3 gives
+up on it. The short limit wins and the trade-off is a caller-settable
+`timeoutMs`, because it is a latency preference and not a safety one.
+
+### False positives
+
+A scanner that marks ordinary contracts as dangerous is worse than one with
+narrow coverage — the first thing anyone does with a verdict they distrust is
+ignore it. `npm run safety` runs the rules over twelve mainnet contracts
+nobody disputes:
+
+```
+low: 10   medium: 1   unavailable: 1
+```
+
+None reaches `high`. The single `medium` is USDC, whose proxy admin is a plain
+EOA — saying so is correct, not a false positive. Running this is what found
+the one real false positive there was: R4 charged a human confirmation for
+Permit2, Multicall3 and Uniswap's router, on the reasoning that a contract old
+enough to be known and still unindexed was a coverage gap. That reasoning was
+wrong. Indexing tracks whether a contract emits events worth querying, not
+whether it can be trusted, so immutable utility contracts are systematically
+unindexed. The finding is still reported; it no longer moves the tier.
+
+### Coverage
+
+`npm run coverage` sweeps every schema family the rules read against every
+network the engine maps:
+
+| schema family | mainnet | optimism | matic | base | arbitrum |
+|---|---|---|---|---|---|
+| lending-cdp | 6 | 3 | 3 | 4 | 6 |
+| dex-amm | 2 | 2 | 1 | 1 | 2 |
+| yield-vault | 2 | 0 | 0 | 0 | 1 |
+
+**33 conforming deployments across 3 schema families and 5 networks** — Aave
+V2/V3, Compound V2/V3, Morpho Blue, DForce, Sonne, Radiant, Seamless, Curve,
+Uniswap V3, Velodrome V2, Sushiswap, Yearn V2, Rari — reachable by the same
+rules with no per-protocol code. Nothing has to be added for a new protocol
+inside a family that is already read; it is covered the moment somebody
+indexes it with the standard schema. What costs a line is a new family, and
+the three rows above are what those three lines bought.
 
 **Coverage.** Of 18 mainnet lending deployments the registry ranks, 5 answer
 the Messari `markets` fields R3 reads — Aave V2, Aave V3, Compound V2,

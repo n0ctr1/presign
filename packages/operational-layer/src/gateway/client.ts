@@ -22,7 +22,33 @@ import type { DeploymentId } from "../types.js";
 
 const DEFAULT_BASE_URL = "https://gateway.thegraph.com/api";
 
-/** Every query is bounded: a verdict has a latency budget it cannot exceed. */
+/**
+ * How long to wait before giving up on the gateway.
+ *
+ * Three seconds is a compromise between two measured cases that no single
+ * number serves well, and the number is here rather than in a caller because
+ * most callers have no way to know that.
+ *
+ * The Uniswap V3 mainnet subgraph answers R3's data query in 5.2 to 6.3
+ * seconds for ten pools — repeatedly, while sitting four seconds behind chain
+ * head. It is current and simply slow, so at three seconds a call to the
+ * Uniswap V3 factory comes back `unavailable`: we stop listening rather than
+ * fail to find an answer. Raising the limit to eight seconds fixes that one
+ * contract and costs the common path dearly — a cold verdict on USDC went from
+ * 306 ms to 7.7 seconds, because a slow deployment indexing it then gets to
+ * spend most of the budget before R3 gives up on it.
+ *
+ * USDC is met far more often than the Uniswap factory, so the short limit
+ * wins and the slow counterparty is reported as unavailable, which is at least
+ * true: no current view was obtained *within the time we were willing to
+ * wait*. Callers who would rather wait than be refused can raise
+ * `timeoutMs`, and that is the honest shape of the choice — a latency
+ * preference, not a safety one.
+ *
+ * What protects a verdict from stale data is the freshness budget, which
+ * compares a deployment's lag to chain head and is enforced whatever the
+ * transport does. Changing this number cannot make a verdict less current.
+ */
 const DEFAULT_TIMEOUT_MS = 3_000;
 
 export interface GatewayClientOptions {

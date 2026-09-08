@@ -20,10 +20,10 @@ import type {
 } from "@presign/operational-layer";
 
 import type { Address } from "../types.js";
-import type { ProtocolContext } from "../rules/r3-invariant-breach.js";
+import type { ProbeOutcome, ProtocolContext } from "../rules/r3-invariant-breach.js";
 
 interface CachedProbe {
-  readonly record: DeploymentRecord | null;
+  readonly outcome: ProbeOutcome;
   readonly probedAt: Date;
 }
 
@@ -106,15 +106,20 @@ export class OperationalProtocolContext implements ProtocolContext {
    * Conformance and liveness for one deployment.
    *
    * Issued together, because a sequential pair would measure the schema and
-   * the chain seconds apart. A probe that throws yields null rather than
-   * propagating: one deployment refusing introspection must not deny the rule
-   * every other deployment that indexes the same contract.
+   * the chain seconds apart.
+   *
+   * A probe that throws is reported as `failed` rather than propagating: one
+   * deployment refusing introspection must not deny the rule every other
+   * deployment that indexes the same contract. But it is emphatically not
+   * reported as a deployment that did not conform — the caller has to be able
+   * to tell "this one cannot answer" from "we could not ask", because only
+   * the first is safe to read as an absence of findings.
    */
   async probeDeployment(
     candidate: DeploymentCandidate,
     requirement: RuleRequirement,
     network: NetworkId,
-  ): Promise<DeploymentRecord | null> {
+  ): Promise<ProbeOutcome> {
     const key = `${candidate.deploymentId}:${requirement.ruleId}:${requirement.schemaFamily}:${network}`;
     const cached = this.#probes.get(key);
     if (
@@ -122,10 +127,10 @@ export class OperationalProtocolContext implements ProtocolContext {
       (this.#now().getTime() - cached.probedAt.getTime()) / 1000 <=
         this.#probeTtlSeconds
     ) {
-      return cached.record;
+      return cached.outcome;
     }
 
-    let record: DeploymentRecord | null;
+    let outcome: ProbeOutcome;
     try {
       const [conformance, liveness] = await Promise.all([
         this.#conformance.check(candidate.deploymentId, {
@@ -134,13 +139,19 @@ export class OperationalProtocolContext implements ProtocolContext {
         }),
         this.#liveness.check(candidate.deploymentId, network),
       ]);
-      record = { candidate, conformance, liveness };
-    } catch {
-      record = null;
+      outcome = { status: "probed", record: { candidate, conformance, liveness } };
+    } catch (error) {
+      // The reason travels with the failure. "Could not probe" without a cause
+      // sends an operator looking at the indexer when the answer might be an
+      // expired key, a refused payment, or a timeout of our own making.
+      outcome = {
+        status: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+      };
     }
 
-    this.#probes.set(key, { record, probedAt: this.#now() });
-    return record;
+    this.#probes.set(key, { outcome, probedAt: this.#now() });
+    return outcome;
   }
 
   query<T>(deploymentId: string, query: string): Promise<T> {

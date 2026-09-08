@@ -34,10 +34,10 @@ interface Setup {
   missingFields?: string[];
   lagSeconds?: number;
   indexingErrors?: boolean;
-  probeReturnsNull?: boolean;
   deployments?: number;
   markets?: unknown[];
   queryThrows?: string;
+  probeFails?: string;
 }
 
 function protocolWith(setup: Setup) {
@@ -52,19 +52,22 @@ function protocolWith(setup: Setup) {
       Promise.resolve(Array((setup.deployments ?? 1)).fill(candidate)),
     probeDeployment: () =>
       Promise.resolve(
-        setup.probeReturnsNull === true
-          ? null
+        setup.probeFails !== undefined
+          ? { status: "failed", reason: setup.probeFails }
           : {
-              candidate,
-              conformance: {
-                answersFields: [],
-                missingFields: setup.missingFields ?? [],
-              },
-              liveness: {
-                lagSeconds: setup.lagSeconds ?? 4,
-                checkedAt: T0,
-                indexedBlock: 25916120,
-                hasIndexingErrors: setup.indexingErrors ?? false,
+              status: "probed",
+              record: {
+                candidate,
+                conformance: {
+                  answersFields: [],
+                  missingFields: setup.missingFields ?? [],
+                },
+                liveness: {
+                  lagSeconds: setup.lagSeconds ?? 4,
+                  checkedAt: T0,
+                  indexedBlock: 25916120,
+                  hasIndexingErrors: setup.indexingErrors ?? false,
+                },
               },
             },
       ),
@@ -94,7 +97,7 @@ test("an unconfigured chain is unavailable rather than silently skipped", async 
 test("nothing indexes the counterparty, so R3 has nothing to say", async () => {
   const protocol = {
     findIndexingDeployments: () => Promise.resolve([]),
-    probeDeployment: () => Promise.resolve(null),
+    probeDeployment: () => Promise.reject(new Error("unused")),
     query: () => Promise.reject(new Error("unused")),
   } as never;
 
@@ -208,6 +211,35 @@ test("high utilisation alone is not a breach", async () => {
         { ...healthyMarket, totalDepositBalanceUSD: "1000", totalBorrowBalanceUSD: "999" },
       ],
     }),
+  ).evaluate(context());
+
+  assert.ok(outcome.status === "evaluated");
+  assert.deepEqual(outcome.findings, []);
+});
+
+test("every probe failing is unavailable, never a clean protocol", async () => {
+  /*
+   * The regression this exists for, found by funding queries with a wallet
+   * that had no money in it. Every probe was refused, R3 had been treating an
+   * unreachable deployment identically to one that does not conform, and a
+   * call to Aave came back `low` with no source named — a green verdict
+   * resting entirely on data nobody ever saw.
+   */
+  const outcome = await rule(
+    protocolWith({ probeFails: "payment was refused: insufficient_balance" }),
+  ).evaluate(context());
+
+  assert.ok(outcome.status === "unavailable");
+  assert.equal(outcome.reason, "probe_failed");
+  assert.match(outcome.detail, /insufficient_balance/);
+});
+
+test("a probe that completes and does not conform is still nothing to say", async () => {
+  // The other half of the distinction: here we did ask, and the answer was
+  // that this deployment cannot speak for the protocol. That is a fact about
+  // the counterparty, and an empty result is the honest report of it.
+  const outcome = await rule(
+    protocolWith({ missingFields: ["totalDepositBalanceUSD"] }),
   ).evaluate(context());
 
   assert.ok(outcome.status === "evaluated");

@@ -227,6 +227,21 @@ const SPECS: Readonly<Record<string, InvariantSpec>> = {
  * Everything R3 needs from the operational layer, behind one interface so the
  * rule can be tested without a gateway, a registry or a network.
  */
+/**
+ * The result of probing one deployment.
+ *
+ * Two arms rather than a nullable record, because collapsing them is a
+ * fail-open. "I asked and this deployment does not speak the schema" and "I
+ * could not ask" look identical as `null`, and a rule that treats both as
+ * `evaluated([])` reports a green verdict when every probe failed — which is
+ * exactly what happened the first time this project funded queries with a
+ * wallet that had no money in it. Every probe was refused, R3 reported
+ * nothing found, and a call to Aave came back `low` with no source named.
+ */
+export type ProbeOutcome =
+  | { readonly status: "probed"; readonly record: DeploymentRecord }
+  | { readonly status: "failed"; readonly reason: string };
+
 export interface ProtocolContext {
   /** Deployments whose manifest indexes this contract. */
   findIndexingDeployments(
@@ -238,7 +253,7 @@ export interface ProtocolContext {
     candidate: DeploymentCandidate,
     requirement: RuleRequirement,
     network: NetworkId,
-  ): Promise<DeploymentRecord | null>;
+  ): Promise<ProbeOutcome>;
   /** Execute a query against a pinned deployment. */
   query<T>(deploymentId: string, query: string): Promise<T>;
 }
@@ -330,7 +345,7 @@ export class InvariantBreachRule implements Rule {
     const probed = await Promise.all(
       specced.map(async (entry) => ({
         ...entry,
-        record: await this.#protocol.probeDeployment(
+        outcome: await this.#protocol.probeDeployment(
           entry.candidate,
           this.#requirementFor(entry.spec),
           network,
@@ -338,19 +353,49 @@ export class InvariantBreachRule implements Rule {
       })),
     );
 
-    const conforming = probed.filter(
-      (
-        entry,
-      ): entry is (typeof probed)[number] & { record: DeploymentRecord } =>
-        entry.record !== null &&
-        entry.record.conformance.missingFields.length === 0 &&
-        !entry.record.liveness.hasIndexingErrors,
+    const failures = probed.filter((entry) => entry.outcome.status === "failed");
+
+    const conforming = probed.flatMap((entry) =>
+      entry.outcome.status === "probed" &&
+      entry.outcome.record.conformance.missingFields.length === 0 &&
+      !entry.outcome.record.liveness.hasIndexingErrors
+        ? [{ ...entry, record: entry.outcome.record }]
+        : [],
     );
 
-    // Nothing that indexes this contract speaks a schema we can reason about,
-    // so the counterparty is not a protocol instance R3 evaluates. R1, R2 and
-    // the unidentified-contract class carry the verdict from here.
-    if (conforming.length === 0) return evaluated([]);
+    if (conforming.length === 0) {
+      /*
+       * A probe that failed is not a deployment that does not conform.
+       *
+       * If anything could not be reached, a conforming deployment may be
+       * sitting behind the failure, and reporting "nothing to check here"
+       * would be a green answer resting on data we never saw. Only when every
+       * probe actually completed is the empty result a finding about the
+       * counterparty rather than about us.
+       */
+      if (failures.length > 0) {
+        const reasons = [
+          ...new Set(
+            failures.map((entry) =>
+              entry.outcome.status === "failed" ? entry.outcome.reason : "",
+            ),
+          ),
+        ];
+        return {
+          status: "unavailable",
+          reason: "probe_failed",
+          detail:
+            `${failures.length} of ${probed.length} deployment(s) indexing ${target} could ` +
+            `not be probed, so whether any of them can answer for this protocol is ` +
+            `unknown: ${reasons.join("; ")}`,
+        };
+      }
+
+      // Every probe completed and nothing speaks a schema we can reason about,
+      // so the counterparty is not a protocol instance R3 evaluates. R1, R2
+      // and the unidentified-contract class carry the verdict from here.
+      return evaluated([]);
+    }
 
     const now = this.#now();
     const fresh = conforming

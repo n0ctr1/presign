@@ -58,6 +58,7 @@ export {
   CHAIN_TO_NETWORK,
   InvariantBreachRule,
   type InvariantBreachRuleOptions,
+  type ProbeOutcome,
   type ProtocolContext,
 } from "./rules/r3-invariant-breach.js";
 

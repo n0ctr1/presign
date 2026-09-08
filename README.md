@@ -153,7 +153,7 @@ This section tracks what is actually running, not what is planned.
 | Proxy upgrade history over MCP | done — verified against a live stream |
 | Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
 | x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
-| x402 outbound (The Graph on Base) | not started |
+| x402 outbound (The Graph on Base) | done — real paid queries settled on Base, verified on-chain |
 
 Measured against live mainnet on 2026-09-05: liveness 173 ms, conformance
 394 ms, warming R3 across six lending candidates 611 ms, cached resolve
@@ -181,6 +181,58 @@ is refused rather than shown to a human, because a prompt is a request and
 people approve prompts. `npm run demo -- --device` runs the second row against a
 real Ledger.
 
+## What a verdict costs
+
+The service charges for a verdict and the verdict costs something to produce.
+Both halves are now visible in the same response:
+
+```json
+"cost": {
+  "charged": "0.005 HBAR",
+  "paid_upstream": {
+    "funding": "x402",
+    "queries_paid": 2,
+    "total": "0.02 USDC",
+    "payments": [{ "deployment_id": "Qm…", "amount": "0.01 USDC", "transaction": "0x…" }]
+  }
+}
+```
+
+Queries to The Graph can be funded two ways. A Studio API key draws on a
+monthly plan: the per-query cost is real but arrives as a bill, and nothing in
+the response says what it was — so on that path `paid_upstream` reports
+`known: false` rather than a zero it would be inventing. The x402 path pays
+$0.01 USDC per query on Base, and the amount is read from the gateway's own
+402 manifest, recorded only once settlement returns, with the settlement hash
+attached.
+
+The transfer is EIP-3009 `transferWithAuthorization`, so a payment is a
+signature the facilitator submits. The wallet needs USDC and no ETH, and this
+process never broadcasts a transaction — which is the same claim the advisor
+makes about signing.
+
+A Studio key wins whenever one exists, because spending real money should be
+deliberate; `GATEWAY_FUNDING=x402` forces payment. The case worth pointing at
+is the third one: **no key and a funded wallet**, where the process pays its
+own way. That is not a fallback but the reason x402 exists, in The Graph's own
+words — *you have a funded wallet and no API key, and no human to mint one*.
+
+Payments are sent **one at a time**. The gateway refuses concurrent payments
+from the same payer — four in flight returned two answers and two bare 402s —
+and the rule that needs indexed data probes every candidate deployment in
+parallel, because that is free when a key funds the queries. Without
+serialising, the paid path lost a probe or two per verdict at random and
+fail-closed logic correctly refused to answer, with a funded wallet and
+correct code. A verdict a second slower is still a verdict; one assembled
+from whichever probes won a race is not.
+
+**Verified with real money.** `npm run demo` on the paid path returns `low`
+for the Aave call with its deployment and lag named, and `unavailable` for the
+same call at a 1-second budget — the project's central claim, produced
+entirely from data bought a cent at a time. A settlement picked from that run
+resolves on Base: 0.01 USDC from the payer to the `payTo` in the gateway's own
+manifest, gas paid by the facilitator rather than by us.
+
 ## Repository layout
 
 ```
@@ -202,13 +254,20 @@ docs/setup/                  device and environment runbooks
 
 ```bash
 npm install
-npm run demo              # four scenarios against a live mainnet fork
+npm run demo              # five scenarios against a live mainnet fork
 npm run demo -- --device  # medium tier escalates to a real Ledger
+GATEWAY_FUNDING=x402 npm run demo   # pay The Graph per query instead of using a key
 ```
 
 Needs a Subgraph Studio API key at
 `~/.presign/secrets/the-graph__studio-api-key` (mode `0600`), or
 `THE_GRAPH_STUDIO_API_KEY` in the environment, plus Foundry for the fork.
+
+To pay per query instead, put a Base private key at
+`~/.presign/secrets/base__payer-key` (mode `0600`) or `BASE_PAYER_KEY`, and
+fund that address with USDC on Base. No ETH is needed: payments are EIP-3009
+authorisations, submitted by the facilitator. With a payer key and no Studio
+key, the process pays automatically.
 
 ### Using the data layer without the rest
 

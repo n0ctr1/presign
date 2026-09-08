@@ -167,6 +167,26 @@ async function main(): Promise<void> {
       );
     }
 
+    /*
+     * What the verdicts cost us upstream.
+     *
+     * Printed only when there is something to print, which is the honest
+     * shape: on a Studio plan the per-query cost is real but billed monthly,
+     * so this process cannot see it and says nothing rather than reporting a
+     * zero it would be inventing.
+     */
+    const payments = wiring.ledger.payments;
+    if (payments.length > 0) {
+      const line = "\u2500".repeat(72);
+      console.log(`\n${line}\nUpstream cost of the verdicts above\n${line}`);
+      for (const payment of payments) {
+        console.log(
+          `  ${payment.display}  ${payment.deploymentId}  ${payment.transaction ?? "(no settlement ref)"}`,
+        );
+      }
+      console.log(`  total: ${JSON.stringify(wiring.ledger.totals())}`);
+    }
+
   } finally {
     await closeDevice?.();
     wiring.close();

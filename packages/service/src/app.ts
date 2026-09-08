@@ -22,6 +22,7 @@
  */
 
 import { Hono, type Context } from "hono";
+import { formatUnits6, type PaymentLedger } from "@presign/operational-layer";
 import { paymentMiddleware, setSettlementOverrides } from "@x402/hono";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
@@ -81,6 +82,48 @@ export interface ServiceOptions {
   readonly network: HederaNetwork;
   /** Override the facilitator, e.g. a self-hosted one. */
   readonly facilitatorUrl?: string;
+  /**
+   * What this service paid upstream, when it funds queries with x402.
+   *
+   * Present only when the process pays per query. Absent means the gateway is
+   * funded by a Studio plan, where the marginal cost of a query is real but
+   * arrives on a monthly invoice — so the honest report is that the number is
+   * unknown here, not that it is zero.
+   */
+  readonly ledger?: PaymentLedger;
+}
+
+/**
+ * Upstream spend attributable to one verdict.
+ *
+ * Returns a stated unknown rather than zero when there is no ledger. A `0`
+ * there would read as "this verdict cost us nothing", which is false on a
+ * Studio plan — the cost is simply somewhere this process cannot see.
+ */
+function describeUpstream(ledger: PaymentLedger | undefined, mark: number) {
+  if (ledger === undefined) {
+    return {
+      funding: "studio-key",
+      known: false,
+      note: "queries are funded by a Studio plan, so their marginal cost is billed monthly rather than per call",
+    };
+  }
+  const payments = ledger.since(mark);
+  return {
+    funding: "x402",
+    known: true,
+    queries_paid: payments.length,
+    total: payments.length === 0 ? "0 USDC" : formatUnits6(
+      payments.reduce((sum, p) => sum + BigInt(p.amount), 0n).toString(),
+      "USDC",
+    ),
+    payments: payments.map((p) => ({
+      deployment_id: p.deploymentId,
+      amount: p.display,
+      network: p.network,
+      transaction: p.transaction,
+    })),
+  };
 }
 
 interface VerdictRequestBody {
@@ -180,6 +223,17 @@ export function createApp(options: ServiceOptions): Hono {
       network: options.network,
       payTo: options.payTo,
       rules: fullAvailable ? ["R1", "R2", "R3", "R4"] : ["R1", "R2"],
+      // What this process has spent upstream since it started, so an operator
+      // can see the running cost without buying a verdict to find out.
+      upstream_spend:
+        options.ledger === undefined
+          ? { funding: "studio-key", known: false }
+          : {
+              funding: "x402",
+              known: true,
+              queries_paid: options.ledger.count,
+              totals: options.ledger.totals(),
+            },
       sources: (options.sources?.() ?? []).map((source) => ({
         name: source.name,
         live: source.live,
@@ -272,6 +326,9 @@ export function createApp(options: ServiceOptions): Hono {
       }
 
       const started = Date.now();
+      // Marked before the run so the payments attributed to this verdict are
+      // the ones it actually caused, not everything the process has spent.
+      const spentBefore = options.ledger?.count ?? 0;
 
       let outcome: Awaited<ReturnType<PresignPipeline["run"]>>;
       try {
@@ -332,6 +389,16 @@ export function createApp(options: ServiceOptions): Hono {
           indexed_sources_used: outcome.verdict.provenance.sources.length,
           elapsed_ms: Date.now() - started,
           charged: quote(rules).hbar + " HBAR",
+          /*
+           * Both sides of the trade, in one place.
+           *
+           * `charged` is what the caller paid us; this is what producing their
+           * verdict cost us upstream, per query, with the settlement hashes to
+           * check it against. It is the difference between asserting a margin
+           * and showing one — and the reason the claim "the cost of a verdict
+           * is an observable number" is only true on the paid funding path.
+           */
+          paid_upstream: describeUpstream(options.ledger, spentBefore),
         },
         journal: {
           topic: receipt.topicId,

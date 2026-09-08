@@ -39,6 +39,23 @@ export {
 } from "./gateway/client.js";
 
 export {
+  BASE_NETWORK,
+  chooseFunding,
+  BASE_USDC,
+  DEFAULT_MAX_PER_QUERY,
+  formatUnits6,
+  paymentRefusalReason,
+  PaymentLedger,
+  StudioKeyFunding,
+  X402Funding,
+  type ChooseFundingOptions,
+  type FundingChoice,
+  type GatewayFunding,
+  type PaymentRecord,
+  type X402FundingOptions,
+} from "./gateway/funding.js";
+
+export {
   ChainHeadUnavailableError,
   JsonRpcChainHeadSource,
   type JsonRpcChainHeadOptions,

@@ -232,3 +232,103 @@ fields are text would also have caught it.
 chain head without a stall — 410 blocks and 199 distinct proxies during this
 session's MCP check, and the upgrade a rule caught 87 seconds after it landed
 is still the single most convincing thing this project demonstrates.
+
+---
+
+## 2026-09-08 — the registry advertises only the subgraph-id form of the x402 URL
+
+**Doing:** building outbound x402 so verdict queries can be paid per call on
+Base rather than drawn from a Studio plan, which is what makes the cost of a
+verdict a number a caller can see instead of one they take on trust.
+
+**Found:** two things, one good and one worth fixing.
+
+The good one first: `payment_options` on every registry row is genuinely well
+built. It names both funding methods, the exact price, the flow, and — the
+part that is unusual — a `use_when` for each. "You have a funded wallet and no
+API key, and no human to mint one" is the clearest one-line statement of what
+x402 is *for* that we have read anywhere, and it is what decided our default:
+a Studio key when one exists, payment when there is no key and no human.
+
+The fixable one: `payment_options.x402.url` and `query_url_x402` both point at
+`/api/x402/subgraphs/id/<subgraphId>`. A subgraph id floats to whatever version
+its owner publishes next, so a verdict quoting one names something that may
+have changed since. Everything else in our pipeline is pinned to a deployment
+id for exactly that reason, and `query_url` (the keyed one) is available in
+both forms.
+
+`/api/x402/deployments/id/<Qm…>` turns out to exist and serve identical terms —
+same scheme, network, amount, `payTo`, asset, and `eip3009` transfer method —
+but we found it by guessing at the path, not from any documentation. A
+consumer who does not think to try it takes the floating id, and loses pinning
+without noticing that they have.
+
+**Impact:** would have silently weakened provenance on the one path where we
+also pay for the data. We use the deployment-pinned URL and our tests assert
+the emitted endpoint contains no `/subgraphs/` segment.
+
+**Suggestion:** add the deployment-pinned URL to the registry row, alongside
+the subgraph one — `query_url_x402_deployment`, or a second entry under
+`payment_options.x402`. The information exists; the row already carries
+`ipfs_hash`. Documenting that the path form exists at all would be most of the
+fix.
+
+**Also worth noting:** the failure message when the wallet is empty is exactly
+right. `Verification failed: invalid_exact_evm_insufficient_balance`, in the
+second 402's `payment-required` header, is specific enough to act on without
+guessing. The contrast with the first 402 is worth keeping in mind for anyone
+implementing this — the two are the same status code and mean different
+things, and a client that does not read the header reports an empty body and
+sends its operator hunting a broken endpoint.
+
+---
+
+## 2026-09-08 — the x402 gateway refuses concurrent payments from one payer
+
+**Doing:** first real paid queries after funding the wallet. A single query
+settled immediately and correctly: 0.01 USDC, EIP-3009, gas paid by the
+facilitator, `_meta.deployment` echoing back the exact deployment we pinned.
+
+**Found:** under concurrency it drops payments. Four paid requests from the
+same payer in flight together returned two answers and two bare `402`s — and
+those 402s carried `payment-required` with an **empty error string**, unlike
+every other refusal we have seen from this gateway, which are specific enough
+to act on (`invalid_exact_evm_insufficient_balance` told us exactly what was
+wrong the first time).
+
+It is not a balance problem: the wallet held nearly a dollar and each query
+costs a cent. Sequentially, and at two in flight, everything settles. The
+symptom is that some fraction of overlapping payments is simply refused.
+
+**Impact:** larger than it sounds, because the natural way to write a consumer
+is the one that breaks. Our rule that needs indexed data probes every
+candidate deployment *in parallel* — that is the fastest way to ask, and it is
+free when queries are funded by a key. On the paid path it silently lost a
+probe or two per verdict, and our own fail-closed logic then correctly refused
+to answer. The verdict was right and the reason was invisible: a funded
+wallet, correct code, and `probe_failed`.
+
+We now serialise payments per payer. It costs about a second per extra
+deployment on a verdict, which is the right trade — a slower verdict is still
+a verdict, while one assembled from whichever probes won a race is not.
+
+**Suggestion:** two things, in order of value.
+
+First, put an error string in that 402. Every other refusal from this gateway
+names its cause, and this one arriving empty is what turned a ten-minute
+diagnosis into an hour: an empty error is indistinguishable from a bug in our
+own client. `payment_in_flight_for_payer`, or anything at all, would have
+pointed straight at it.
+
+Second, document the limit — whether it is one payment per payer at a time, a
+rate, or a lock held during settlement. A consumer cannot discover the
+concurrency a payment rail supports except by losing requests to it, and the
+number is the difference between a parallel and a serial design.
+
+**Worth noting on the positive side:** the settled path is genuinely good. A
+paid query answers in under a second including the extra round trip, the
+settlement hash is returned in `payment-response` so a caller can verify the
+payment on Base without trusting us, and requiring no ETH for gas means an
+agent funds one asset instead of two. Being able to quote a verdict's upstream
+cost as a real number with checkable transactions behind it is the thing we
+could not do before this existed.

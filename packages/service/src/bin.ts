@@ -16,10 +16,12 @@ import { serve } from "@hono/node-server";
 import { PresignPipeline } from "@presign/gateway";
 import { HcsVerdictJournal } from "@presign/hedera";
 import {
+  chooseFunding,
   ConformanceProbe,
   GatewayClient,
   JsonRpcChainHeadSource,
   LivenessProbe,
+  PaymentLedger,
   SubgraphRegistrySource,
 } from "@presign/operational-layer";
 import {
@@ -127,6 +129,18 @@ async function main(): Promise<void> {
     );
   }
 
+  /*
+   * Upstream spend, recorded only when this process actually pays per query.
+   *
+   * Declared out here because /health and every verdict response report from
+   * it, while the funding decision is made below alongside R3's other
+   * dependencies. `usingX402` gates whether the ledger is handed to the app at
+   * all: an empty ledger on a Studio plan would report a cost of zero, which
+   * is false — the cost is real and simply billed elsewhere.
+   */
+  const ledger = new PaymentLedger();
+  let usingX402 = false;
+
   const rules = () => [
     new UnlimitedApprovalRule(),
     new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
@@ -147,8 +161,32 @@ async function main(): Promise<void> {
   let full: PresignPipeline | undefined;
   let closeRegistry: (() => void) | undefined;
   try {
-    const studioKey = await readSecret("the-graph__studio-api-key");
-    const gateway = new GatewayClient({ apiKey: () => Promise.resolve(studioKey) });
+    /*
+     * How gateway queries are funded.
+     *
+     * A Studio key is preferred when one exists, because spending real money
+     * should be deliberate. `GATEWAY_FUNDING=x402` forces payment; a process
+     * with a payer key and no Studio key pays automatically, which is the
+     * situation x402 was built for — an agent that needs protocol data and
+     * has no human available to mint it a key.
+     */
+    const choice = chooseFunding({
+      studioKey: await readSecret("the-graph__studio-api-key").catch(() => null),
+      payerKey: await readSecret("base__payer-key").catch(() => null),
+      ledger,
+      ...(process.env["GATEWAY_FUNDING"] === "x402"
+        ? { prefer: "x402" as const }
+        : {}),
+    });
+    usingX402 = choice.funding.kind === "x402";
+    console.log(`  gateway funding: ${choice.reason}`);
+
+    const gateway = new GatewayClient({
+      funding: choice.funding,
+      // A paid query costs an extra round trip: 402, sign, retry. The keyed
+      // default would turn that into a freshness failure on the paid path.
+      ...(choice.funding.kind === "x402" ? { timeoutMs: 12_000 } : {}),
+    });
     const registry = buildRegistryClient();
     closeRegistry = registry.close;
     const discovery = new SubgraphRegistrySource(registry);
@@ -187,6 +225,7 @@ async function main(): Promise<void> {
   }
 
   const app = createApp({
+    ...(usingX402 ? { ledger } : {}),
     pipelines: full === undefined ? { local } : { local, full },
     sources: () =>
       upgrades === undefined

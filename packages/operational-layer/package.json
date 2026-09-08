@@ -23,5 +23,11 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly",
     "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@x402/core": "2.25.0",
+    "@x402/evm": "2.25.0",
+    "@x402/fetch": "2.25.0",
+    "viem": "2.56.3"
   }
 }

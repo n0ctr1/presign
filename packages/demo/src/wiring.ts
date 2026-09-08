@@ -15,8 +15,10 @@ import type { Readable, Writable } from "node:stream";
 import {
   ConformanceProbe,
   GatewayClient,
+  chooseFunding,
   JsonRpcChainHeadSource,
   LivenessProbe,
+  PaymentLedger,
   SubgraphRegistrySource,
   type RegistryToolCaller,
 } from "@presign/operational-layer";
@@ -131,6 +133,8 @@ export interface Wiring {
    * it was working correctly.
    */
   readonly findRecentDeployment: () => Promise<string | null>;
+  /** What queries cost upstream. Empty unless funding is x402. */
+  readonly ledger: PaymentLedger;
   readonly close: () => void;
 }
 
@@ -145,9 +149,34 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     new EnvSecretSource(),
   ]);
 
+  /*
+   * How gateway queries are funded.
+   *
+   * The Studio key wins when there is one, so `npm run demo` does not spend
+   * real money by default. `GATEWAY_FUNDING=x402` pays per query instead, and
+   * the demo then prints what each verdict cost upstream — which is the only
+   * arrangement under which that number exists at all.
+   */
+  const ledger = new PaymentLedger();
+  const readSecret = async (scope: string, name: string) => {
+    try {
+      return (await secrets.resolve({ scope, name })).value;
+    } catch {
+      return null;
+    }
+  };
+  const funding = chooseFunding({
+    studioKey: await readSecret("the-graph", "studio-api-key"),
+    payerKey: await readSecret("base", "payer-key"),
+    ledger,
+    ...(process.env["GATEWAY_FUNDING"] === "x402" ? { prefer: "x402" as const } : {}),
+  });
+  console.log(`Gateway funding: ${funding.reason}`);
+
   const gateway = new GatewayClient({
-    apiKey: async () =>
-      (await secrets.resolve({ scope: "the-graph", name: "studio-api-key" })).value,
+    funding: funding.funding,
+    // A paid query costs an extra round trip: 402, sign, retry.
+    ...(funding.funding.kind === "x402" ? { timeoutMs: 12_000 } : {}),
   });
 
   // Resolved before anything that needs it: both the fork and the chain-head
@@ -259,6 +288,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
   return {
     engine: new VerdictEngine({ simulator, rules: rules() }),
     findRecentDeployment,
+    ledger,
     strictEngine: new VerdictEngine({
       simulator,
       rules: rules(strictLagSeconds),

@@ -13,6 +13,11 @@
  *    deployment that actually answered.
  */
 
+import {
+  paymentRefusalReason,
+  StudioKeyFunding,
+  type GatewayFunding,
+} from "./funding.js";
 import type { DeploymentId } from "../types.js";
 
 const DEFAULT_BASE_URL = "https://gateway.thegraph.com/api";
@@ -21,11 +26,34 @@ const DEFAULT_BASE_URL = "https://gateway.thegraph.com/api";
 const DEFAULT_TIMEOUT_MS = 3_000;
 
 export interface GatewayClientOptions {
-  /** Resolves the Studio API key per call, so a rotated key is picked up. */
-  readonly apiKey: () => Promise<string>;
+  /**
+   * Resolves the Studio API key per call, so a rotated key is picked up.
+   *
+   * Shorthand for `funding: new StudioKeyFunding(apiKey)`, kept because it is
+   * how most callers pay and spelling out a strategy object for the common
+   * case would be noise.
+   */
+  readonly apiKey?: () => Promise<string>;
+  /**
+   * How queries are paid for. Overrides {@link apiKey} when both are given.
+   *
+   * The alternative is x402 on Base, where the price of each query is in the
+   * payment rather than on a monthly invoice. That is the only arrangement
+   * under which this project's claim about its own economics — that a
+   * verdict's cost is visible rather than trusted — is actually true.
+   */
+  readonly funding?: GatewayFunding;
   readonly baseUrl?: string;
+  /**
+   * Per-query timeout.
+   *
+   * A paid query is slower than a keyed one by an entire extra round trip: the
+   * gateway answers 402, the client signs, and the request is retried. The
+   * default here is for the keyed path; callers funding with x402 should raise
+   * it rather than discover the difference as a freshness failure.
+   */
   readonly timeoutMs?: number;
-  /** Injectable for tests. */
+  /** Injectable for tests. Ignored when `funding` supplies its own. */
   readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -65,21 +93,30 @@ function readGraphQLErrors(body: GraphQLBody): readonly string[] {
 }
 
 export class GatewayClient {
-  readonly #apiKey: () => Promise<string>;
+  readonly #funding: GatewayFunding;
   readonly #baseUrl: string;
   readonly #timeoutMs: number;
-  readonly #fetch: typeof globalThis.fetch;
 
   constructor(options: GatewayClientOptions) {
-    this.#apiKey = options.apiKey;
+    if (options.funding === undefined && options.apiKey === undefined) {
+      // Neither key nor payment method: a client that could never answer,
+      // failing at the first query instead of here.
+      throw new TypeError("GatewayClient needs either `apiKey` or `funding`");
+    }
+    this.#funding =
+      options.funding ?? new StudioKeyFunding(options.apiKey!, options.fetch);
     this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.#fetch = options.fetch ?? globalThis.fetch;
+  }
+
+  /** How queries are paid for, named in provenance. */
+  get funding(): GatewayFunding["kind"] {
+    return this.#funding.kind;
   }
 
   /** Endpoint pinned to one immutable deployment. */
   deploymentUrl(deploymentId: DeploymentId): string {
-    return `${this.#baseUrl}/deployments/id/${deploymentId}`;
+    return this.#funding.url(this.#baseUrl, deploymentId);
   }
 
   async query<T>(
@@ -87,15 +124,15 @@ export class GatewayClient {
     query: string,
     variables?: Readonly<Record<string, unknown>>,
   ): Promise<T> {
-    const key = await this.#apiKey();
+    const funded = await this.#funding.headers();
 
     let response: Response;
     try {
-      response = await this.#fetch(this.deploymentUrl(deploymentId), {
+      response = await this.#funding.fetch(this.deploymentUrl(deploymentId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
+          ...funded,
         },
         body: JSON.stringify(
           variables === undefined ? { query } : { query, variables },
@@ -107,6 +144,22 @@ export class GatewayClient {
       // closed rather than wait past its budget.
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new GatewayQueryError(deploymentId, reason, { httpStatus: null });
+    }
+
+    /*
+     * A 402 here is the *second* one in a paid exchange, and it means
+     * something different from the first: the payment was made and refused.
+     * Its body is empty, so falling through to the JSON check below would
+     * report "response was not JSON" and send an operator hunting a broken
+     * endpoint instead of reading the reason the gateway supplied.
+     */
+    if (response.status === 402) {
+      const reason = paymentRefusalReason(response.headers.get("payment-required"));
+      throw new GatewayQueryError(
+        deploymentId,
+        `payment was refused${reason === null ? " and the gateway gave no reason" : `: ${reason}`}`,
+        { httpStatus: 402 },
+      );
     }
 
     let body: GraphQLBody;

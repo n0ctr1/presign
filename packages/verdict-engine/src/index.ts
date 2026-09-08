@@ -62,6 +62,21 @@ export {
 } from "./rules/r3-invariant-breach.js";
 
 export {
+  DEFAULT_FRESH_DEPLOYMENT_SECONDS,
+  UnidentifiedCounterpartyRule,
+  type CounterpartyDirectory,
+  type UnidentifiedCounterpartyRuleOptions,
+} from "./rules/r4-unidentified-counterparty.js";
+
+export {
+  DEFAULT_HORIZON_SECONDS,
+  RpcContractOrigin,
+  type ContractOrigin,
+  type ContractOriginSource,
+  type RpcContractOriginOptions,
+} from "./chain/contract-origin.js";
+
+export {
   OperationalProtocolContext,
   type OperationalProtocolContextOptions,
 } from "./protocol/operational-context.js";

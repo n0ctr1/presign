@@ -34,6 +34,8 @@ import {
   MutableLogicRule,
   OperationalProtocolContext,
   resolveEthereumRpc,
+  RpcContractOrigin,
+  UnidentifiedCounterpartyRule,
   UnlimitedApprovalRule,
   VerdictEngine,
 } from "@presign/verdict-engine";
@@ -113,6 +115,22 @@ export interface Wiring {
   readonly engine: VerdictEngine;
   readonly strictEngine: VerdictEngine;
   readonly forkBlock: number;
+  /**
+   * Finds a contract deployed shortly before the fork block.
+   *
+   * R4's scenario cannot use a fixed address: the whole point is a contract
+   * too new for anyone to have indexed, and any address hard-coded here would
+   * be a week old by the next run and years old by the time anyone reads this.
+   * So the demo goes and finds one on the real chain.
+   *
+   * The search runs *backwards from the fork block*, not from chain head,
+   * which is the part that is easy to get wrong. Anvil pins its state at the
+   * fork block; a contract created after it does not exist in the fork, and a
+   * call to it would simulate as calldata sent to an empty address — a
+   * different finding entirely, and one that would make R4 look broken while
+   * it was working correctly.
+   */
+  readonly findRecentDeployment: () => Promise<string | null>;
   readonly close: () => void;
 }
 
@@ -151,6 +169,10 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     liveness,
     gateway,
   });
+
+  // Shares the fork's archive endpoint: historical `eth_getCode` is an archive
+  // read, and this is the one URL in the process known to serve those.
+  const origin = new RpcContractOrigin({ url: rpc.url });
 
   const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
   const simulator = new ForkSimulator(fork.rpcUrl);
@@ -194,10 +216,49 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
       protocol,
       ...(maxLagSeconds === undefined ? {} : { maxLagSeconds }),
     }),
+    // No freshness budget of its own: R4 asks whether anybody has ever indexed
+    // the counterparty, not what the indexers say about it now, so the strict
+    // engine runs the identical rule and the two engines still differ in
+    // exactly one variable.
+    new UnidentifiedCounterpartyRule({ directory: protocol, origin }),
   ];
+
+  const findRecentDeployment = async (): Promise<string | null> => {
+    const rpcCall = async <T>(method: string, params: unknown[]): Promise<T | null> => {
+      const response = await fetch(rpc.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+      const body = (await response.json()) as { result?: T };
+      return body.result ?? null;
+    };
+
+    // Forty blocks is roughly eight minutes of mainnet, which has always held
+    // a contract creation. Bounded so a quiet chain ends the search rather
+    // than the demo.
+    for (let block = forkBlock; block > forkBlock - 40; block -= 1) {
+      const body = await rpcCall<{
+        transactions: readonly { hash: string; to: string | null }[];
+      }>("eth_getBlockByNumber", [`0x${block.toString(16)}`, true]);
+
+      for (const transaction of body?.transactions ?? []) {
+        if (transaction.to !== null) continue;
+        const receipt = await rpcCall<{ contractAddress: string | null }>(
+          "eth_getTransactionReceipt",
+          [transaction.hash],
+        );
+        if (typeof receipt?.contractAddress === "string") {
+          return receipt.contractAddress;
+        }
+      }
+    }
+    return null;
+  };
 
   return {
     engine: new VerdictEngine({ simulator, rules: rules() }),
+    findRecentDeployment,
     strictEngine: new VerdictEngine({
       simulator,
       rules: rules(strictLagSeconds),

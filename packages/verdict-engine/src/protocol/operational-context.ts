@@ -27,6 +27,11 @@ interface CachedProbe {
   readonly probedAt: Date;
 }
 
+interface CachedIndexing {
+  readonly candidates: readonly DeploymentCandidate[];
+  readonly foundAt: Date;
+}
+
 export interface OperationalProtocolContextOptions {
   readonly discovery: DiscoverySource;
   readonly conformance: ConformanceChecker;
@@ -52,6 +57,7 @@ export class OperationalProtocolContext implements ProtocolContext {
   readonly #probeTtlSeconds: number;
   readonly #now: () => Date;
   readonly #probes = new Map<string, CachedProbe>();
+  readonly #indexing = new Map<string, CachedIndexing>();
 
   constructor(options: OperationalProtocolContextOptions) {
     this.#discovery = options.discovery;
@@ -62,11 +68,38 @@ export class OperationalProtocolContext implements ProtocolContext {
     this.#now = options.now ?? (() => new Date());
   }
 
-  findIndexingDeployments(
+  /**
+   * Deployments whose manifest names this contract.
+   *
+   * Memoised on the same TTL as the probes, because two rules now ask this
+   * question about the same counterparty in a single verdict: R3 to find a
+   * protocol it can check, R4 to find out whether anyone has ever heard of the
+   * address. Without the memo an R4 that costs nothing new in principle would
+   * double the registry traffic of every verdict in practice.
+   *
+   * A TTL is safe here in a way it would not be for liveness. Lag is a
+   * measurement that decays, which is why it is aged rather than cached; the
+   * set of manifests naming an address changes only when somebody publishes a
+   * subgraph, and seconds of staleness in that answer cannot turn a stale
+   * verdict green.
+   */
+  async findIndexingDeployments(
     address: Address,
     network: NetworkId,
   ): Promise<readonly DeploymentCandidate[]> {
-    return this.#discovery.findByContract(address, network);
+    const key = `${address.toLowerCase()}:${network}`;
+    const cached = this.#indexing.get(key);
+    if (
+      cached !== undefined &&
+      (this.#now().getTime() - cached.foundAt.getTime()) / 1000 <=
+        this.#probeTtlSeconds
+    ) {
+      return cached.candidates;
+    }
+
+    const candidates = await this.#discovery.findByContract(address, network);
+    this.#indexing.set(key, { candidates, foundAt: this.#now() });
+    return candidates;
   }
 
   /**

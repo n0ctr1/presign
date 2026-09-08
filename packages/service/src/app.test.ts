@@ -73,7 +73,11 @@ test("the quote advertises only what this process can serve", async () => {
   assert.ok("/verdict/local" in quote.routes);
   // Quoting a price for work that cannot be done is the same lie told earlier.
   assert.ok(!("/verdict/full" in quote.routes));
-  assert.match(String(quote.note), /R3 cannot run/);
+  assert.match(String(quote.note), /R3 and R4 cannot run/);
+  // The note has to say what the cheap route does *not* know, not only which
+  // route is missing: a caller told "R4 is unavailable" learns nothing unless
+  // they are also told that leaves the counterparty unidentified.
+  assert.match(String(quote.note), /counterparty/i);
 });
 
 test("with an R3-capable pipeline, the dearer route is offered and priced", async () => {
@@ -94,7 +98,7 @@ test("health states which rules this instance actually runs", async () => {
   ).json()) as { rules: string[] };
 
   assert.deepEqual(bare.rules, ["R1", "R2"]);
-  assert.deepEqual(capable.rules, ["R1", "R2", "R3"]);
+  assert.deepEqual(capable.rules, ["R1", "R2", "R3", "R4"]);
 });
 
 /*

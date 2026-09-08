@@ -17,7 +17,7 @@
  */
 
 /** Rules a caller may request. Ordered by what they cost to run. */
-export const RULE_IDS = ["R1", "R2", "R3"] as const;
+export const RULE_IDS = ["R1", "R2", "R3", "R4"] as const;
 export type RuleId = (typeof RULE_IDS)[number];
 
 /** HBAR is quoted in tinybars: 1 HBAR = 100_000_000 tinybars. */
@@ -29,6 +29,14 @@ export const TINYBARS_PER_HBAR = 100_000_000n;
  * Deliberately small. The fork, the RPC calls and the rule evaluation are our
  * fixed costs; charging much for them would price out exactly the
  * high-frequency agents this is meant for.
+ *
+ * R4 sits here rather than carrying its own surcharge, which is a claim worth
+ * defending: it reads the public registry and then a bounded number of archive
+ * `eth_getCode` calls — two for a contract that predates the search horizon,
+ * around twenty when it has to bisect — on the RPC the fork already needs, and
+ * caches the answer per address. That cost scales with distinct counterparties
+ * seen once, not with requests. R3's does scale with requests, which is the
+ * whole reason it is the one rule that carries a surcharge.
  */
 export const BASE_TINYBARS = 100_000n; // 0.001 HBAR
 

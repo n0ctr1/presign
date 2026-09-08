@@ -145,6 +145,28 @@ async function main(): Promise<void> {
       () => strict.run(call(AAVE_V3_POOL)),
     );
 
+    /*
+     * The case the first three rules are all silent about.
+     *
+     * Nothing here is contrived: the address is a real contract deployed on
+     * mainnet minutes before the fork block, found by walking back from it.
+     * R1 sees no approval, R2 finds no proxy, R3 finds no protocol to check —
+     * and before R4 existed those three silences added up to `low`.
+     */
+    const fresh = await wiring.findRecentDeployment();
+    if (fresh === null) {
+      console.log(
+        "\n(no contract creation in the forty blocks before the fork block, " +
+          "so the unidentified-counterparty scenario is skipped)",
+      );
+    } else {
+      await scenario(
+        `5. Call to ${fresh} — deployed minutes ago, indexed by nobody`,
+        "   Expect: high. R1, R2 and R3 all find nothing; that is the point.",
+        () => pipeline.run(call(fresh)),
+      );
+    }
+
   } finally {
     await closeDevice?.();
     wiring.close();

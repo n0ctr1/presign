@@ -79,7 +79,7 @@ agent -> [x402 / Hedera] -> gateway
                               |- decode unsigned calldata
                               |- fork simulation -> state diff
                               |- operational layer -> live deployments
-                              |- rules R1-R3 over the diff
+                              |- rules R1-R4 over the diff
                               '- verdict + reasons + provenance
                                      |
    low -> agent signs   ·   medium -> Ledger   ·   high -> refuse + HCS
@@ -112,14 +112,32 @@ calldata.
 | **R1** Unlimited approval | `approve` for `type(uint256).max` to a spender outside the allowlist, cross-checked against an incident registry |
 | **R2** Mutable logic | Contract behind a proxy with a live admin or no timelock |
 | **R3** Invariant breach | Shares not reconciling with assets; TVL diverging from issued shares |
+| **R4** Unidentified counterparty | No deployment in the registry indexes the contract, and code first appeared at the address N days ago |
 
-`unknown contract` is an explicit verdict class, not a bug: with no verified ABI
-there is only a 4-byte selector, and the honest answer is *"call not recognised,
-contract deployed N days ago, risk high"*.
+R4 is the one rule whose finding is an *absence*. The other three look for
+something specific and are honestly silent when they do not find it — which
+means a call to a contract deployed this morning that nobody has ever indexed
+used to come back `low`, three rules having each found nothing. That is the
+same fail-open the `unavailable` tier exists to prevent, arriving by a
+different route, and it silently passed the exact case this project is for.
+
+The claim R4 makes is narrow enough to check: not "this contract is unknown",
+which is unfalsifiable, but "no deployment in *this* registry indexes *this*
+address", which anyone can query. With no verified ABI there is only a 4-byte
+selector, and a familiar one proves nothing — matching `approve(address,uint256)`
+costs an attacker nothing and is what makes a malicious clone look ordinary.
+
+Age is searched for, not looked up: no RPC returns a contract's birthday, so
+one `eth_getCode` at a seven-day horizon answers the question for almost every
+counterparty, and a bisection inside that window recovers the exact deployment
+block when it matters. R4 also reads EIP-7702 delegations and judges the
+delegate rather than the account — without that, every smart account would be
+reported as an unidentified contract, and agent wallets are exactly the
+accounts that carry delegations.
 
 ## Status
 
-Day 1 of 9. This section tracks what is actually running, not what is planned.
+This section tracks what is actually running, not what is planned.
 
 | Component | State |
 |---|---|
@@ -131,6 +149,7 @@ Day 1 of 9. This section tracks what is actually running, not what is planned.
 | Capability binding + warm cache | done — verified against live mainnet |
 | MCP server + `SKILL.md` | done — 5 tools, verified over stdio |
 | Fork simulation + rules R1-R3 | done — verified against live mainnet fork |
+| R4 unidentified counterparty + EIP-7702 delegation | done — verified against live mainnet |
 | Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
 | x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
 | x402 outbound (The Graph on Base) | not started |
@@ -165,7 +184,7 @@ real Ledger.
 
 ```
 packages/operational-layer   freshness, conformance, capability binding
-packages/verdict-engine      simulation, rules R1-R3, tiered verdict
+packages/verdict-engine      simulation, rules R1-R4, tiered verdict
 packages/gateway             composes verdict, escalation and confirmation
 packages/ledger              on-device confirmation, Key Ring secret source
 packages/hedera              verdict journal on the Consensus Service

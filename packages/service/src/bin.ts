@@ -27,9 +27,11 @@ import {
   describeRpc,
   ForkSimulator,
   InvariantBreachRule,
+  RpcContractOrigin,
   MutableLogicRule,
   OperationalProtocolContext,
   resolveEthereumRpc,
+  UnidentifiedCounterpartyRule,
   UnlimitedApprovalRule,
   VerdictEngine,
 } from "@presign/verdict-engine";
@@ -162,13 +164,25 @@ async function main(): Promise<void> {
     full = new PresignPipeline({
       engine: new VerdictEngine({
         simulator,
-        rules: [...rules(), new InvariantBreachRule({ protocol })],
+        rules: [
+          ...rules(),
+          new InvariantBreachRule({ protocol }),
+          // R4 shares the registry adapter R3 already builds. It is scoped to
+          // this route for the same reason R3 is: without the registry the
+          // process cannot tell an unindexed contract from an unreachable
+          // lookup, and guessing between those is the failure the rule exists
+          // to prevent.
+          new UnidentifiedCounterpartyRule({
+            directory: protocol,
+            origin: new RpcContractOrigin({ url: rpc.url }),
+          }),
+        ],
       }),
     });
-    console.log("  R3 enabled — /verdict/full is offered");
+    console.log("  R3 and R4 enabled — /verdict/full is offered");
   } catch (error) {
     console.log(
-      `  R3 disabled — /verdict/full is NOT offered (${error instanceof Error ? error.message : String(error)})`,
+      `  R3 and R4 disabled — /verdict/full is NOT offered (${error instanceof Error ? error.message : String(error)})`,
     );
   }
 

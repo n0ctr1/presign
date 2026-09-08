@@ -9,7 +9,8 @@
  *
  * Two priced routes rather than one. `/verdict/local` runs the rules that need
  * only an RPC; `/verdict/full` adds R3, which buys indexed protocol data from a
- * metered gateway. Charging both the same would make cheap callers subsidise
+ * metered gateway, and R4, which asks the deployment registry whether anyone
+ * has ever indexed the counterparty at all. Charging both the same would make cheap callers subsidise
  * expensive ones and would hide the only cost in the system that scales.
  *
  * The dearer route is registered **only** when a pipeline that can actually run
@@ -49,7 +50,7 @@ export interface ServicePipelines {
   /** R1 and R2: simulation and local checks. Always required. */
   readonly local: PresignPipeline;
   /**
-   * R1, R2 and R3. Omit when indexed data is unavailable — the `/verdict/full`
+   * R1 through R4. Omit when indexed data is unavailable — the `/verdict/full`
    * route is then not registered at all, so it cannot be paid for.
    */
   readonly full?: PresignPipeline;
@@ -148,9 +149,11 @@ export function createApp(options: ServiceOptions): Hono {
       };
       if (fullAvailable) {
         routes["/verdict/full"] = {
-          rules: ["R1", "R2", "R3"],
+          rules: ["R1", "R2", "R3", "R4"],
           hbar: formatHbar(BASE_TINYBARS + INDEXED_DATA_TINYBARS),
-          buys: "the above, plus protocol invariants from freshness-gated indexed data",
+          buys:
+            "the above, plus protocol invariants from freshness-gated indexed data " +
+            "and identification of the counterparty against the deployment registry",
         };
       }
       return c.json({
@@ -163,7 +166,7 @@ export function createApp(options: ServiceOptions): Hono {
         ...(fullAvailable
           ? {}
           : {
-              note: "This instance has no indexed-data source configured, so R3 cannot run and /verdict/full is not offered.",
+              note: "This instance has no indexed-data source configured, so R3 and R4 cannot run and /verdict/full is not offered. /verdict/local therefore says nothing about whether the counterparty is a contract anyone has ever indexed.",
             }),
       });
     } catch (error) {
@@ -176,7 +179,7 @@ export function createApp(options: ServiceOptions): Hono {
       ok: true,
       network: options.network,
       payTo: options.payTo,
-      rules: fullAvailable ? ["R1", "R2", "R3"] : ["R1", "R2"],
+      rules: fullAvailable ? ["R1", "R2", "R3", "R4"] : ["R1", "R2"],
       sources: (options.sources?.() ?? []).map((source) => ({
         name: source.name,
         live: source.live,
@@ -238,12 +241,12 @@ export function createApp(options: ServiceOptions): Hono {
     paidRoutes["POST /verdict/full"] = {
       accepts: accepts(BASE_TINYBARS + INDEXED_DATA_TINYBARS),
       description:
-        "Pre-signature risk verdict including protocol invariant checks against freshness-gated indexed data.",
+        "Pre-signature risk verdict including protocol invariant checks against freshness-gated indexed data, and the unidentified-counterparty class.",
       mimeType: "application/json",
       unpaidResponseBody: explainPayment(
         "/verdict/full",
         BASE_TINYBARS + INDEXED_DATA_TINYBARS,
-        ["R1", "R2", "R3"],
+        ["R1", "R2", "R3", "R4"],
       ),
     };
   }
@@ -341,7 +344,10 @@ export function createApp(options: ServiceOptions): Hono {
 
   app.post("/verdict/local", handle(options.pipelines.local, ["R1", "R2"]));
   if (options.pipelines.full !== undefined) {
-    app.post("/verdict/full", handle(options.pipelines.full, ["R1", "R2", "R3"]));
+    app.post(
+      "/verdict/full",
+      handle(options.pipelines.full, ["R1", "R2", "R3", "R4"]),
+    );
   }
 
   return app;

@@ -218,15 +218,10 @@ inside a family that is already read; it is covered the moment somebody
 indexes it with the standard schema. What costs a line is a new family, and
 the three rows above are what those three lines bought.
 
-**Coverage.** Of 18 mainnet lending deployments the registry ranks, 5 answer
-the Messari `markets` fields R3 reads — Aave V2, Aave V3, Compound V2,
-Compound V3 and Morpho Blue — with no per-protocol code. That is the coverage
-lever: one rule, one schema family, every protocol that speaks it.
-
 ### What `npm run demo` prints
 
-Four scenarios against a live mainnet fork. The last two are the pair from the
-top of this README, shown here in context:
+Five scenarios against a live mainnet fork. The middle pair is the one from
+the top of this README, shown here in context:
 
 | Scenario | Verdict |
 |---|---|
@@ -234,6 +229,12 @@ top of this README, shown here in context:
 | Bounded approval to the same upgradeable token | `medium` — confirm on device |
 | Call to Aave V3 Pool, healthy, fresh data | `low` — source named, 12.3 s lag |
 | Same call, 1-second freshness budget | `unavailable` — do not sign |
+| Contract deployed minutes ago, indexed by nobody | `high` — do not sign |
+
+The last row uses no fixed address. The demo walks back from the fork block
+until it finds a real contract created minutes earlier, because any address
+written down here would be a week old by the next run. R1, R2 and R3 are all
+silent on it, and before R4 existed those three silences added up to `low`.
 
 The first row never reaches the device: a transaction already judged dangerous
 is refused rather than shown to a human, because a prompt is a request and
@@ -336,6 +337,17 @@ npm run demo              # five scenarios against a live mainnet fork
 npm run demo -- --device  # medium tier escalates to a real Ledger
 npm run demo -- --paid    # real money both ways, one transaction, two chains
 ```
+
+Every number claimed above is a command, not a screenshot:
+
+```bash
+npm run latency           # whole verdicts timed, cold and warm apart
+npm run safety            # the rules over twelve undisputed mainnet contracts
+npm run coverage          # conforming deployments per schema family per network
+```
+
+`npm run safety` exits non-zero if anything reaches `high`, so it can gate a
+release rather than be read and shrugged at.
 
 Needs a Subgraph Studio API key at
 `~/.presign/secrets/the-graph__studio-api-key` (mode `0600`), or

@@ -67,8 +67,15 @@ test("a rule that cannot run turns an otherwise clean result into unavailable", 
   // `low` here is the fail-open this project exists to prevent.
   assert.equal(verdict.tier, "unavailable");
   assert.match(verdict.action, /not the same as safe/i);
+  // The detail travels with the reason: `all_candidates_stale` names the
+  // class of failure, and only the sentence beside it says which deployments
+  // were considered and how far behind they were.
   assert.deepEqual(verdict.provenance.unavailableRules, [
-    { ruleId: "R3", reason: "all_candidates_stale" },
+    {
+      ruleId: "R3",
+      reason: "all_candidates_stale",
+      detail: "all_candidates_stale",
+    },
   ]);
 });
 

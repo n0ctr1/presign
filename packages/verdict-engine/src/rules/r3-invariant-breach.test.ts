@@ -245,3 +245,47 @@ test("a probe that completes and does not conform is still nothing to say", asyn
   assert.ok(outcome.status === "evaluated");
   assert.deepEqual(outcome.findings, []);
 });
+
+test("a deployment that times out hands over to the next fresh one", async () => {
+  /*
+   * Measured against the Uniswap V3 factory: the freshest deployment
+   * indexing it timed out on the data query, and R3 answered `unavailable`
+   * while a second deployment — same schema, four seconds behind head — sat
+   * one place down the ranking. Refusing there is not caution, it is a
+   * refusal we had the data to avoid.
+   */
+  let attempt = 0;
+  const protocol = {
+    ...protocolWith({ deployments: 2 }),
+    query: () => {
+      attempt += 1;
+      return attempt === 1
+        ? Promise.reject(new Error("The operation was aborted due to timeout"))
+        : Promise.resolve({ markets: [healthyMarket] });
+    },
+  } as never;
+
+  const outcome = await rule(protocol).evaluate(context());
+
+  assert.ok(outcome.status === "evaluated");
+  assert.equal(attempt, 2);
+  // The verdict still names what answered, so the fallback is visible rather
+  // than silently papering over the first deployment's failure.
+  assert.equal(outcome.sources?.length, 1);
+});
+
+test("every fresh deployment failing is still unavailable, and says which", async () => {
+  const protocol = {
+    ...protocolWith({ deployments: 2 }),
+    query: () => Promise.reject(new Error("gateway exploded")),
+  } as never;
+
+  const outcome = await rule(protocol).evaluate(context());
+
+  assert.ok(outcome.status === "unavailable");
+  assert.equal(outcome.reason, "query_failed");
+  // Naming the deployments that failed is the difference between an operator
+  // who can act and one who can only re-run it and hope.
+  assert.match(outcome.detail, /none of 2 fresh deployment/);
+  assert.match(outcome.detail, /gateway exploded/);
+});

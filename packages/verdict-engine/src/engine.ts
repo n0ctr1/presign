@@ -98,7 +98,7 @@ export class VerdictEngine {
 
     const findings: Finding[] = [];
     const sources: VerdictSource[] = [];
-    const unavailableRules: { ruleId: string; reason: string }[] = [];
+    const unavailableRules: { ruleId: string; reason: string; detail: string }[] = [];
 
     // Rules are independent, so one throwing must not lose the others'
     // conclusions. A rule that fails is treated as unavailable rather than as
@@ -122,7 +122,11 @@ export class VerdictEngine {
 
     for (const { rule, outcome } of outcomes) {
       if (outcome.status === "unavailable") {
-        unavailableRules.push({ ruleId: rule.id, reason: outcome.reason });
+        unavailableRules.push({
+          ruleId: rule.id,
+          reason: outcome.reason,
+          detail: outcome.detail,
+        });
         continue;
       }
       findings.push(...outcome.findings);

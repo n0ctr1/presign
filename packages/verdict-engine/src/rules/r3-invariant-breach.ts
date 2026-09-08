@@ -417,30 +417,66 @@ export class InvariantBreachRule implements Rule {
       };
     }
 
-    const chosen = fresh[0]!;
-    const spec = chosen.spec;
-    const family = chosen.family;
-    const record = chosen.record;
-    const requirement = this.#requirementFor(spec);
+    /*
+     * The freshest deployment first, then the next, until one answers.
+     *
+     * Every candidate here already passed conformance and sits inside the
+     * freshness budget, so falling through the list trades nothing away: the
+     * second choice is as current as the first and speaks the same schema. It
+     * is only *ranked* lower, and ranking is by lag.
+     *
+     * Taking only the head made one slow indexer decide the verdict. A DEX
+     * subgraph timing out on the data query turned a call to the Uniswap V3
+     * factory into `unavailable` — do not sign — while another deployment
+     * indexing the same contract sat one place down the list, healthy and four
+     * seconds behind head. Refusing there is not caution, it is a refusal we
+     * had the data to avoid.
+     *
+     * Exhausting the list is still `unavailable`, and it must be: at that
+     * point nothing current could answer, which is the case this tier exists
+     * for.
+     */
+    const attempts: string[] = [];
+    let answered:
+      | { entry: (typeof fresh)[number]; entities: readonly Record<string, unknown>[] }
+      | null = null;
 
-    const query = `{ ${requirement.rootField}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${spec.fields.join(" ")} } }`;
+    for (const candidate of fresh) {
+      const requirementFor = this.#requirementFor(candidate.spec);
+      const text = `{ ${requirementFor.rootField}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${candidate.spec.fields.join(" ")} } }`;
+      try {
+        const data = await this.#protocol.query<Record<string, unknown>>(
+          candidate.record.candidate.deploymentId,
+          text,
+        );
+        const rows = data[requirementFor.rootField];
+        answered = {
+          entry: candidate,
+          entities: Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [],
+        };
+        break;
+      } catch (error) {
+        attempts.push(
+          `${candidate.record.candidate.displayName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
-    let entities: readonly Record<string, unknown>[];
-    try {
-      const data = await this.#protocol.query<Record<string, unknown>>(
-        record.candidate.deploymentId,
-        query,
-      );
-      const rows = data[requirement.rootField];
-      entities = Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
-    } catch (error) {
+    if (answered === null) {
       // A query that fails is not a protocol that is healthy.
       return {
         status: "unavailable",
         reason: "query_failed",
-        detail: error instanceof Error ? error.message : String(error),
+        detail: `none of ${fresh.length} fresh deployment(s) answered — ${attempts.join("; ")}`,
       };
     }
+
+    const chosen = answered.entry;
+    const spec = chosen.spec;
+    const family = chosen.family;
+    const record = chosen.record;
+    const requirement = this.#requirementFor(spec);
+    const entities = answered.entities;
 
     const lagSeconds = Number(chosen.lag.toFixed(1));
     const findings: Finding[] = [];

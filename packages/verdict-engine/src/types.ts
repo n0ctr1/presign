@@ -86,10 +86,20 @@ export interface VerdictProvenance {
   readonly chainId: number;
   /** Indexed sources consulted, with their lag at the time of use. */
   readonly sources: readonly VerdictSource[];
-  /** Rules that could not run, and why. Empty is meaningful. */
+  /**
+   * Rules that could not run, and why. Empty is meaningful.
+   *
+   * `reason` is the machine-readable cause and `detail` the sentence a person
+   * acts on. Carrying only the first made an operator's job impossible in
+   * practice: `query_failed` says a query failed, not which deployment
+   * refused, or whether the cause was a timeout, an expired key or a subgraph
+   * with no indexers allocated to it. Every one of those is a different fix,
+   * and the rules already write the distinction — the engine was dropping it.
+   */
   readonly unavailableRules: readonly {
     readonly ruleId: string;
     readonly reason: string;
+    readonly detail: string;
   }[];
 }
 

@@ -74,6 +74,30 @@ import type { DeploymentCandidate, NetworkId } from "@presign/operational-layer"
  * solicit approvals, drain, abandon — measured in hours, not weeks.
  */
 export const DEFAULT_FRESH_DEPLOYMENT_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Why an old unindexed contract is reported but does not raise the tier.
+ *
+ * The first version of this rule charged `warning` — a human confirmation on
+ * the device — for any unindexed counterparty past the window, reasoning that
+ * a contract old enough to be known and still absent from every registry was
+ * a coverage gap worth a second look. Running the rule over contracts nobody
+ * disputes showed that reasoning is wrong.
+ *
+ * Multicall3, Permit2 and Uniswap's router are indexed by nothing. Not because
+ * they are obscure — a large share of Ethereum transactions touch them — but
+ * because indexing tracks whether a contract emits events somebody wants to
+ * query, not whether it can be trusted. Immutable utility contracts are
+ * systematically unindexed, so treating absence as a signal charges friction
+ * to exactly the contracts an agent meets most often, and a verdict that asks
+ * for a human on Multicall3 is one people learn to click through.
+ *
+ * The finding is still reported, because "nothing independent describes this"
+ * is true and worth a reader seeing. It simply stops being a reason to stop.
+ * The argument survives intact where it was always strong: deployed hours ago
+ * *and* corroborated by nobody. That combination is not true of infrastructure
+ * and stays critical.
+ */
+
 
 /**
  * Selectors whose meaning is a convention rather than a guarantee.
@@ -333,7 +357,7 @@ export class UnidentifiedCounterpartyRule implements Rule {
 
     return {
       ruleId: this.id,
-      severity: age.fresh ? "critical" : "warning",
+      severity: age.fresh ? "critical" : "info",
       // True of every call to this counterparty, not of this one in
       // particular. Uncapped by policy all the same; see the file header.
       standing: true,

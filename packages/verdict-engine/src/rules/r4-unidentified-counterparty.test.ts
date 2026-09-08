@@ -123,14 +123,21 @@ test("this is the gap that used to return low: the engine tiers it high", async 
   assert.match(verdict.action, /do not sign/i);
 });
 
-test("an unindexed contract older than the search horizon is medium, not high", async () => {
+test("an old unindexed contract is reported without raising the tier", async () => {
+  /*
+   * Measured against contracts nobody disputes: Multicall3, Permit2 and
+   * Uniswap's router are indexed by nothing, and every one of them is
+   * ordinary. Indexing tracks whether a contract emits events worth querying,
+   * not whether it can be trusted, so charging a human confirmation for
+   * absence charges it to the contracts an agent meets most often.
+   */
   const outcome = await evaluate(
     rule([], { status: "older_than", block: 25_000_000, timestamp: secondsAgo(90 * 24 * 3600) }),
     context(transaction()),
   );
 
   const [finding] = outcome.findings!;
-  assert.equal(finding!.severity, "warning");
+  assert.equal(finding!.severity, "info");
   assert.equal(finding!.evidence["age_bound"], "older_than");
   // A bound, not a birthday: the search found code at this block and stopped,
   // so nothing was deployed here and the field must not claim otherwise.
@@ -146,8 +153,9 @@ test("an age that could not be established is never read as fresh, nor as old", 
 
   const [finding] = outcome.findings!;
   // Inventing `high` out of an RPC timeout would mirror the fail-open this
-  // rule closes; medium already puts the transaction in front of a human.
-  assert.equal(finding!.severity, "warning");
+  // rule closes. An unknown age is treated like an old one: reported, not
+  // acted on, because there is no evidence to act on.
+  assert.equal(finding!.severity, "info");
   assert.equal(finding!.evidence["age_seconds"], null);
   assert.equal(finding!.evidence["origin_block"], null);
   assert.match(finding!.detail, /unknown rather than long/);
@@ -402,4 +410,16 @@ test("a deployment block is searched for once and remembered", async () => {
   await source.originOf(UNKNOWN as never);
 
   assert.equal(stub.codeProbes.length, probes);
+});
+
+test("a fresh unindexed contract still refuses, which is where the argument holds", async () => {
+  // The band that survived the fixture. Deployed within the window *and*
+  // corroborated by nobody is not true of infrastructure, so it keeps its
+  // teeth while the old band lost them.
+  const outcome = await evaluate(
+    rule([], { status: "deployed", block: 25_916_000, timestamp: secondsAgo(1800) }),
+    context(transaction()),
+  );
+
+  assert.equal(outcome.findings![0]!.severity, "critical");
 });

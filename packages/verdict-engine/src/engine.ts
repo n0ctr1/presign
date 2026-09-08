@@ -75,7 +75,20 @@ export class VerdictEngine {
     this.#now = options.now ?? (() => new Date());
   }
 
-  async evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
+  /**
+   * Produce a verdict.
+   *
+   * The whole body runs under one fork lease. The simulation and the rules
+   * must see the same block — the diff says what the transaction changes, and
+   * R2 and R4 then read storage and code to explain it — so a fork that
+   * refreshed in the middle would have a rule reasoning about one block using
+   * evidence from another.
+   */
+  evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
+    return this.#simulator.withFreshFork(() => this.#evaluate(transaction));
+  }
+
+  async #evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
     const diff = await this.#simulator.simulate(transaction);
     const context = {
       transaction,

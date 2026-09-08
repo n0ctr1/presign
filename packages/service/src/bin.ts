@@ -96,7 +96,21 @@ async function main(): Promise<void> {
     );
   }
   const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
-  const simulator = new ForkSimulator(fork.rpcUrl);
+  /*
+   * The fork re-forks once it falls behind.
+   *
+   * A demo runs for a minute; this process is meant to run for days, and anvil
+   * pins the fork at the block it started on. Without refreshing, every
+   * verdict tomorrow would be simulated against today's state while reporting
+   * a current lag for its indexed data — declared honestly in provenance and
+   * still the exact mismatch this project argues against. Sixty seconds is
+   * about five blocks, close enough to head for a pre-signature answer and far
+   * enough apart that re-forking is rare.
+   */
+  const simulator = new ForkSimulator(fork.rpcUrl, {
+    maxForkAgeSeconds: Number(process.env["MAX_FORK_AGE_SECONDS"] ?? 60),
+    forkUrl: rpc.url,
+  });
 
   /*
    * Proxy upgrade history, when a Substreams key is available.

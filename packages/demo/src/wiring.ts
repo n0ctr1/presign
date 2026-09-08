@@ -206,6 +206,8 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
   const origin = new RpcContractOrigin({ url: rpc.url });
 
   const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
+  // No refresh: the demo runs for a couple of minutes, and a fixed block
+  // keeps every scenario comparable against the same state.
   const simulator = new ForkSimulator(fork.rpcUrl);
   const forkBlock = (await simulator.simulate({
     from: "0x0000000000000000000000000000000000000001",

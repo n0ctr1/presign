@@ -12,6 +12,9 @@ const tx = { from: AGENT, to: TARGET, value: 0n, data: "0x", chainId: 1 } as Uns
 
 function simulator(revertReason: string | null = null) {
   return {
+    // The engine takes a fork lease around every verdict; a double that does
+    // not offer one would pass here and fail against the real simulator.
+    withFreshFork: <T>(work: () => Promise<T>) => work(),
     simulate: () =>
       Promise.resolve({ pre: {}, post: {}, blockNumber: 25916120, revertReason }),
     asRuleReaders: () => ({

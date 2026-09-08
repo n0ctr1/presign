@@ -116,6 +116,8 @@ class RegistrySubprocess implements RegistryToolCaller {
 export interface Wiring {
   readonly engine: VerdictEngine;
   readonly strictEngine: VerdictEngine;
+  /** R1 and R2 only: what `/verdict/local` is priced for. */
+  readonly localEngine: VerdictEngine;
   readonly forkBlock: number;
   /**
    * Finds a contract deployed shortly before the fork block.
@@ -234,13 +236,27 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     console.log("Proxy upgrade stream: no Substreams key, R2 runs without upgrade history");
   }
 
-  const rules = (maxLagSeconds?: number) => [
+  /**
+   * The rules that need nothing but an RPC.
+   *
+   * Split out because the two-sided payment scenario registers both priced
+   * routes, and `/verdict/local` must actually be the cheaper verdict. An
+   * earlier version of the service offered the dearer route while running
+   * these two alone; the mirror of that mistake — charging the base price
+   * while running everything — is just as dishonest, and the split makes both
+   * impossible here.
+   */
+  const localRules = () => [
     // The spender used by the high-risk scenario, standing in for an incident
     // registry entry.
     new UnlimitedApprovalRule({
       incidentRegistry: ["0x00000000000000000000000000000000deadbeef"],
     }),
     new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
+  ];
+
+  const rules = (maxLagSeconds?: number) => [
+    ...localRules(),
     new InvariantBreachRule({
       protocol,
       ...(maxLagSeconds === undefined ? {} : { maxLagSeconds }),
@@ -287,6 +303,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
 
   return {
     engine: new VerdictEngine({ simulator, rules: rules() }),
+    localEngine: new VerdictEngine({ simulator, rules: localRules() }),
     findRecentDeployment,
     ledger,
     strictEngine: new VerdictEngine({

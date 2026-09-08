@@ -12,6 +12,9 @@
       "path": "../gateway"
     },
     {
+      "path": "../hedera"
+    },
+    {
       "path": "../ledger"
     },
     {
@@ -21,10 +24,13 @@
       "path": "../secrets"
     },
     {
-      "path": "../verdict-engine"
+      "path": "../service"
     },
     {
       "path": "../substreams"
+    },
+    {
+      "path": "../verdict-engine"
     }
   ]
 }

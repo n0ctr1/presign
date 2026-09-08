@@ -4,6 +4,9 @@
  *
  *   npm run demo                 verdicts only
  *   npm run demo -- --device     medium tier escalates to a real Ledger
+ *   npm run demo -- --paid       real money both ways: the agent buys the
+ *                                verdict in HBAR, the verdict buys its data
+ *                                in USDC
  *
  * The last two scenarios are the same transaction under different freshness
  * budgets. That pair is the claim this project makes: when fresh context
@@ -14,7 +17,12 @@
 import { PresignPipeline, describe, type ConfirmationRequester } from "@presign/gateway";
 import type { UnsignedTransaction, Verdict } from "@presign/verdict-engine";
 
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { buildWiring } from "./wiring.js";
+import { runTwoSided } from "./two-sided.js";
 
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const AAVE_V3_POOL = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2";
@@ -78,6 +86,16 @@ async function scenario(
 
 async function main(): Promise<void> {
   const useDevice = process.argv.includes("--device");
+  /*
+   * `--paid` turns on both directions of real payment at once.
+   *
+   * Off by default because a demo should not spend somebody's money for
+   * being run. On, it funds gateway queries with x402 on Base and adds a
+   * final scenario where an agent buys a verdict from us in HBAR — so one
+   * transaction produces both numbers, with settlement hashes on two chains.
+   */
+  const paid = process.argv.includes("--paid");
+  if (paid) process.env["GATEWAY_FUNDING"] = "x402";
 
   console.log("Starting mainnet fork and subgraph registry…");
   const wiring = await buildWiring();
@@ -175,6 +193,34 @@ async function main(): Promise<void> {
      * so this process cannot see it and says nothing rather than reporting a
      * zero it would be inventing.
      */
+    if (paid) {
+      await runTwoSided({
+        engine: wiring.engine,
+        localEngine: wiring.localEngine,
+        ledger: wiring.ledger,
+        secret: async (name) => {
+          try {
+            return (
+              await readFile(join(homedir(), ".presign", "secrets", name), "utf8")
+            ).trim();
+          } catch {
+            return null;
+          }
+        },
+        // Aave, so the verdict actually needs indexed protocol data. A
+        // transaction R1 and R2 could settle on their own would produce a
+        // clean verdict and an upstream cost of nothing, which demonstrates
+        // the plumbing while hiding the point.
+        transaction: {
+          from: AGENT,
+          to: AAVE_V3_POOL,
+          value: "0",
+          data: "0x",
+          chainId: 1,
+        },
+      });
+    }
+
     const payments = wiring.ledger.payments;
     if (payments.length > 0) {
       const line = "\u2500".repeat(72);

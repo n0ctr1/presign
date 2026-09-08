@@ -16,3 +16,7 @@ export {
   RULE_IDS,
 } from "./pricing.js";
 export type { Quote, RuleId } from "./pricing.js";
+// Exported so anything else that opens the journal reuses the same topic. A
+// second entry point creating its own would fragment the record the first one
+// is building, which is the failure this file exists to prevent.
+export { readTopicId, writeTopicId } from "./state.js";

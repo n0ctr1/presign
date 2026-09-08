@@ -184,7 +184,26 @@ real Ledger.
 ## What a verdict costs
 
 The service charges for a verdict and the verdict costs something to produce.
-Both halves are now visible in the same response:
+`npm run demo -- --paid` shows both against one transaction, in one process,
+with nothing mocked:
+
+```
+  IN  — the agent paid us, on Hedera
+        0.005 HBAR   0.0.10399265 -> 0.0.10398276
+        0.0.9185802@1788837451.614028743
+
+  OUT — we paid The Graph, on Base
+        0.01 USDC  QmcXE5QVcBcv…  0xf1928bbe4cf4d666a31c4e9f6a2bf3704c77ec9bd717b43a7fe3e79dd99f2e5d
+        1 queries, 0.01 USDC in total
+```
+
+Split across two terminals those are two anecdotes. Printed together against
+one transaction they are a margin, and both settlements are public: the HBAR
+on Hedera testnet, the USDC on Base. The verdict is journalled to HCS in the
+same run, carrying the transaction hash, the tier, and the deployment that
+answered with its lag — and no calldata, address or value.
+
+Both halves are in the response body too:
 
 ```json
 "cost": {
@@ -256,7 +275,7 @@ docs/setup/                  device and environment runbooks
 npm install
 npm run demo              # five scenarios against a live mainnet fork
 npm run demo -- --device  # medium tier escalates to a real Ledger
-GATEWAY_FUNDING=x402 npm run demo   # pay The Graph per query instead of using a key
+npm run demo -- --paid    # real money both ways, one transaction, two chains
 ```
 
 Needs a Subgraph Studio API key at

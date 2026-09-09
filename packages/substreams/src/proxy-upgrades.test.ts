@@ -178,3 +178,61 @@ test("a hash delivered as raw bytes still encodes correctly", () => {
   // both have to land on the same hash.
   assert.equal(record?.txHash, `0x${HASH}`);
 });
+
+/*
+ * Reconnection. A gRPC stream ends — sometimes with an error, often because a
+ * server closed a long-lived connection — and the first version treated that
+ * as the end of the work. On the deployed service the upgrade history stopped
+ * following head after half an hour and never came back.
+ */
+test("a bounded backfill gives up; an unbounded one keeps trying", async () => {
+  /*
+   * Driven against a port nothing is listening on, so every connection fails
+   * immediately and the only thing under test is what the loop does about it.
+   */
+  const dead = "http://127.0.0.1:1";
+
+  const bounded = ProxyUpgradeIndex.create({ apiKey: "k", endpoint: dead });
+  await assert.rejects(() => bounded.run(0));
+  // `run(stopBlock)` has an end by definition. Reconnecting past it would
+  // ignore the argument the caller passed.
+  assert.equal(bounded.live, false);
+
+  const unbounded = ProxyUpgradeIndex.create({ apiKey: "k", endpoint: dead });
+  let settled = false;
+  const running = unbounded.run().then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  // Still going after the first failure, where the old version would have
+  // returned and left the index frozen while it went on answering queries.
+  assert.equal(settled, false);
+  assert.equal(unbounded.live, false, "a stream that cannot connect is not live");
+  assert.ok(unbounded.failure !== null, "the reason is recorded, not only thrown");
+
+  unbounded.stop();
+  await running;
+  assert.equal(settled, true, "stop() ends the retry loop");
+});
+
+test("resuming picks up after the last block seen, never at head", () => {
+  const index = ProxyUpgradeIndex.create({ apiKey: "k", startBlock: -2000 });
+  index.record({
+    proxy: "0xaaa",
+    implementation: "0xbbb",
+    block: 25_930_000,
+    timestamp: 1_788_000_000,
+    txHash: "0xabc",
+  });
+
+  /*
+   * The index has now seen block 25 930 000. A reconnect that started at head
+   * would leave a hole in the middle of the watched window while
+   * `watchedSince` went on claiming it was continuous — and "no upgrade since
+   * block N" would become a sentence this index has no standing to say.
+   */
+  assert.equal(index.watchedSince, 25_930_000);
+  assert.equal(index.stats.lastBlock, 25_930_000);
+});

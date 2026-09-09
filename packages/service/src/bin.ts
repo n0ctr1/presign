@@ -159,6 +159,11 @@ async function main(): Promise<void> {
     upgrades = ProxyUpgradeIndex.create({
       apiKey: substreamsKey,
       startBlock: -2000,
+      // Logged when the stream drops. It reconnects on its own from the block
+      // after the last one seen, but an operator should still be able to tell
+      // a flapping upstream from a quiet one.
+      onDisconnect: (reason) =>
+        console.error(`  upgrade stream dropped, retrying: ${reason}`),
     });
     void upgrades.run().catch((error: unknown) => {
       // Logged, not swallowed. A dead stream makes R2 report the history as

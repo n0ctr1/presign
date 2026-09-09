@@ -67,6 +67,17 @@ export class SubstreamsError extends Error {
   }
 }
 
+/**
+ * How long to wait before reconnecting, and the ceiling for that wait.
+ *
+ * Two seconds is short enough that an ordinary connection close costs almost
+ * no coverage, and the doubling keeps a genuinely broken upstream from being
+ * hammered. The ceiling sits below the staleness tolerance's own order of
+ * magnitude so a recovering stream is reported live again promptly.
+ */
+const RECONNECT_MIN_MS = 2_000;
+const RECONNECT_MAX_MS = 30_000;
+
 export interface ProxyUpgradeIndexOptions {
   /** Substreams API key. Exchanged for a JWT; not the Subgraph Studio key. */
   readonly apiKey: string;
@@ -77,6 +88,8 @@ export interface ProxyUpgradeIndexOptions {
   readonly startBlock?: number;
   /** Called for each upgrade seen, for logging or a sink. */
   readonly onUpgrade?: (record: UpgradeRecord) => void;
+  /** Called when the stream drops, before it is retried. */
+  readonly onDisconnect?: (reason: string) => void;
 }
 
 const toHex = (bytes: Uint8Array | undefined): string =>
@@ -277,17 +290,68 @@ export class ProxyUpgradeIndex {
    * dead stream would leave the index frozen while still answering queries,
    * and a rule would read stale absence as evidence of no upgrade.
    */
+  /**
+   * Consume the stream, reconnecting until stopped.
+   *
+   * A gRPC stream ends. Not always with an error — a server closing a
+   * long-lived connection is ordinary — and the first version treated that as
+   * the end of the work. On a demo that runs for two minutes nothing shows; on
+   * a service that runs for days the upgrade history stopped following head
+   * after half an hour, silently, and R2 spent the rest of the week reporting
+   * its history as unavailable. Correct, and useless.
+   *
+   * Reconnection resumes from the block after the last one seen, never from
+   * head. That is the part which has to be right: resuming at head would leave
+   * a hole in the middle of the watched window while {@link watchedSince} went
+   * on claiming the window was continuous, and "no upgrade since block N"
+   * would become a sentence this index has no standing to say.
+   *
+   * A bounded backfill — `run(stopBlock)` — still runs exactly once. It has an
+   * end by definition, and reconnecting past it would ignore the argument.
+   */
   async run(stopBlock?: number): Promise<void> {
     this.#running = true;
     this.#failure = null;
+
+    if (stopBlock !== undefined) {
+      try {
+        await this.#run(stopBlock);
+      } catch (error) {
+        this.#failure = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        this.#running = false;
+      }
+      return;
+    }
+
+    let backoffMs = RECONNECT_MIN_MS;
     try {
-      await this.#run(stopBlock);
-    } catch (error) {
-      // Recorded rather than only thrown: a caller that started the stream in
-      // the background would otherwise lose the reason, and the index would go
-      // on answering queries as though it were merely quiet.
-      this.#failure = error instanceof Error ? error.message : String(error);
-      throw error;
+      while (this.#running) {
+        try {
+          await this.#run(undefined);
+          // A clean end is still an end: nothing to report, but nothing to
+          // wait long for either.
+          backoffMs = RECONNECT_MIN_MS;
+        } catch (error) {
+          // Recorded rather than thrown: a caller that started this in the
+          // background would otherwise lose the reason, and the index would go
+          // on answering as though it were merely quiet. `live` is already
+          // false by now, so the failure cannot be read as a clean history.
+          this.#failure = error instanceof Error ? error.message : String(error);
+          this.#options.onDisconnect?.(this.#failure);
+          backoffMs = Math.min(backoffMs * 2, RECONNECT_MAX_MS);
+        }
+
+        if (!this.#running) break;
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        if (!this.#running) break;
+
+        // A fresh abort controller: the previous one may already be aborted,
+        // and reusing it would end the new stream before it produced a block.
+        this.#abort = new AbortController();
+        this.#failure = null;
+      }
     } finally {
       this.#running = false;
     }
@@ -346,7 +410,17 @@ export class ProxyUpgradeIndex {
       substreamPackage: pkg,
       outputModule: "filtered_events",
       productionMode: true,
-      startBlockNum: this.#options.startBlock ?? -1000,
+      /*
+       * Resume where the last connection left off, not where the process
+       * started. On the first connection there is nothing to resume from and
+       * the configured backfill applies; on a reconnect, starting anywhere
+       * later than the last block seen would open a hole in the middle of the
+       * watched window while `watchedSince` kept claiming it was continuous.
+       */
+      startBlockNum:
+        this.#lastBlockSeen === null
+          ? (this.#options.startBlock ?? -1000)
+          : this.#lastBlockSeen + 1,
       ...(stopBlock === undefined ? {} : { stopBlockNum: stopBlock }),
     });
 

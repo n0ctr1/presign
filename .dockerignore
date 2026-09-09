@@ -4,3 +4,4 @@ node_modules
 **/*.tsbuildinfo
 .git
 docs
+site

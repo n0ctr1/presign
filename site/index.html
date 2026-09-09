@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>presign — the verdict declares how stale its evidence was</title>
+<meta name="description" content="Pre-signature transaction risk for agent wallets. The verdict names the deployment that answered and how far behind chain head it was, and a green verdict is unreachable without fresh context. Live on Hedera testnet." />
+<link rel="alternate" type="text/plain" href="/llms.txt"
+      title="Integration guide for agents — the whole surface, no markup">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================
+   PRESIGN — hackathon landing mockup, v2
+   Art direction: security engraving. Guilloché rosettes, stamped verdicts,
+   hairline hatching. Static markup, no live data.
+   ========================================================================== */
+
+:root{
+  /* ink surfaces */
+  --ink:      #06080F;
+  --ink-2:    #0A0E1A;
+  --ink-3:    #101728;
+  --line:     #1A2337;
+  --line-2:   #2E3C58;
+
+  /* text */
+  --fg:       #E3E9F6;
+  --fg-2:     #98A6C1;
+  --dim:      #61708E;
+
+  /* brand + verdicts */
+  --violet:   #8B6BFF;
+  --mint:     #3DE6A8;
+  --gold:     #FFB020;
+  --rose:     #FF4E6A;
+  /* `unavailable` is an absence, not a severity: cool, not hotter. */
+  --slate:    #7E93C4;
+
+  /* the paper section */
+  --paper:    #E9E3D5;
+  --paper-2:  #DED7C6;
+  --p-ink:    #14181C;
+  --p-dim:    #6A6558;
+
+  --w: 1280px;
+  --rail: 1px solid var(--line);
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--ink); color:var(--fg);
+  font-family:"JetBrains Mono", ui-monospace, Menlo, monospace;
+  font-size:15px; line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none}
+h1,h2,h3,h4,p,ul,figure{margin:0}
+ul{padding:0;list-style:none}
+:focus-visible{outline:2px solid var(--violet);outline-offset:3px}
+
+/* serif is used only where the page speaks in its own voice */
+.serif{font-family:"Instrument Serif", Georgia, serif;font-weight:400;letter-spacing:0}
+
+.shell{position:relative;z-index:1;max-width:var(--w);margin:0 auto;border-left:var(--rail);border-right:var(--rail)}
+.pad{padding:0 clamp(16px,3.2vw,44px)}
+section{border-bottom:var(--rail);position:relative}
+
+.tag{font-size:11px;letter-spacing:.16em;color:var(--dim)}
+.tag b{color:var(--violet);font-weight:400}
+.lead{color:var(--fg-2);font-size:14.5px;max-width:60ch}
+h2.head{font-size:clamp(26px,4vw,44px);line-height:1.08;letter-spacing:-.01em}
+h2.head em{font-style:italic;color:var(--violet)}
+.sec-head{padding:clamp(40px,5.5vw,72px) 0 28px;display:grid;gap:16px;max-width:66ch}
+
+.btn{border:1px solid var(--line-2);padding:8px 16px;font-size:12.5px;font-family:inherit;
+     background:transparent;color:var(--fg);cursor:pointer;display:inline-block}
+.btn:hover{border-color:var(--violet);color:var(--violet)}
+.btn.solid{background:var(--violet);border-color:var(--violet);color:#0A0616;font-weight:700}
+.btn.solid:hover{background:#a68cff;color:#0A0616}
+
+/* ---------- header ---------- */
+header{position:sticky;top:0;z-index:30;background:rgba(6,8,15,.86);backdrop-filter:blur(10px);border-bottom:var(--rail)}
+.bar{display:flex;align-items:center;gap:26px;height:58px}
+.mark{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.03em}
+.mark svg{width:20px;height:20px;flex:none}
+nav{display:flex;gap:20px;font-size:13px;color:var(--fg-2)}
+nav a:hover{color:var(--violet)}
+.bar .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+.pulse{font-size:11.5px;color:var(--dim);letter-spacing:.05em}
+.pulse i{display:inline-block;width:6px;height:6px;background:var(--mint);border-radius:50%;margin-right:7px;vertical-align:middle}
+
+/* ---------- ticker ---------- */
+.ticker{display:flex;gap:26px;align-items:center;height:36px;overflow:hidden;
+        font-size:11.5px;color:var(--dim);letter-spacing:.05em;white-space:nowrap}
+/* One element per entry, so entries drop out whole rather than being sliced
+   through the middle of a word by the container's overflow. */
+.tick{display:flex;gap:8px;align-items:center;flex:none}
+.tick b{font-weight:400}
+@media(max-width:960px){.tick:nth-child(n+4){display:none}}
+@media(max-width:720px){.tick:nth-child(n+3){display:none}}
+@media(max-width:560px){.tick:nth-child(n+2){display:none}}
+.v-ok{color:var(--mint)} .v-esc{color:var(--gold)}
+.v-deny{color:var(--rose)} .v-una{color:var(--slate)}
+
+/* ---------- hero ---------- */
+.hero{position:relative;overflow:hidden}
+.watermark{position:absolute;right:-190px;top:-140px;width:720px;height:720px;opacity:.5;
+           pointer-events:none;z-index:0}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.02fr .98fr}
+.hero-l{padding:clamp(46px,6vw,88px) clamp(16px,3.2vw,44px) 40px;border-right:var(--rail)}
+.hero-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center}
+
+h1{font-size:clamp(38px,6vw,74px);line-height:.98;letter-spacing:-.03em;font-weight:500;margin:24px 0 22px}
+h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:italic;
+       font-weight:400;letter-spacing:-.01em;color:var(--violet)}
+.hero-cta{display:flex;gap:12px;flex-wrap:wrap;margin:30px 0 26px}
+.cmd{border:1px solid var(--line);background:var(--ink-2);padding:12px 14px;font-size:12.5px;
+     color:var(--fg-2);display:flex;gap:10px;align-items:center;overflow-x:auto}
+.cmd .p{color:var(--violet)}
+.caret{display:inline-block;width:7px;height:14px;background:var(--fg-2);vertical-align:-2px;
+       animation:blink 1.15s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:24px}
+.chip{border:1px solid var(--line);padding:4px 9px;font-size:10.5px;color:var(--dim);letter-spacing:.08em}
+
+/* ---------- intercept panel ---------- */
+.intercept{border:1px solid var(--line-2);background:linear-gradient(180deg,var(--ink-3),var(--ink-2));
+           width:100%;box-shadow:0 30px 80px -30px rgba(0,0,0,.9)}
+.ip-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+        font-size:11px;color:var(--dim);letter-spacing:.1em}
+.ip-top .id{margin-left:auto;color:var(--fg-2);letter-spacing:.04em}
+.ip-body{padding:18px 14px}
+.kv{display:grid;grid-template-columns:100px 1fr;gap:5px 12px;font-size:12.5px;margin:0}
+.kv dt{color:var(--dim)}
+.kv dd{margin:0;word-break:break-all}
+.kv dd.warn{color:var(--gold)}
+
+.verdict{margin-top:18px;border:1px solid rgba(255,176,32,.45);
+         background:linear-gradient(180deg,rgba(255,176,32,.10),rgba(255,176,32,.015));position:relative}
+.vhead{display:flex;align-items:center;gap:12px;padding:13px 14px;border-bottom:1px solid rgba(255,176,32,.25)}
+.vword{font-size:20px;font-weight:700;color:var(--gold);letter-spacing:.05em}
+.vscore{margin-left:auto;font-size:12px;color:var(--fg-2)}
+.vscore b{color:var(--gold);font-size:16px}
+.reasons{padding:12px 14px;display:grid;gap:9px;font-size:12px}
+.reasons li{display:grid;grid-template-columns:14px 1fr auto;gap:10px;color:var(--fg-2);align-items:baseline}
+.reasons .w{color:var(--gold)}
+.reasons .src{color:var(--dim);font-size:10.5px}
+.ip-foot{border-top:1px solid var(--line);padding:11px 14px;font-size:11px;color:var(--dim);
+         display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ip-foot b{color:var(--fg-2);font-weight:400}
+
+/* ---------- signature band (the page's one big moment) ---------- */
+.sigband{position:relative;background:var(--ink-2);border-top:var(--rail);overflow:hidden}
+.sigband .inner{padding:clamp(22px,3vw,34px) clamp(16px,3.2vw,44px) clamp(18px,2.4vw,26px)}
+.sigband svg{display:block;width:100%;height:auto}
+.sig-caption{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+             font-size:11px;color:var(--dim);letter-spacing:.06em;margin-top:6px}
+.sig-caption b{color:var(--violet);font-weight:400}
+.draw{stroke-dasharray:2600;stroke-dashoffset:2600;animation:draw 2.1s cubic-bezier(.6,.02,.2,1) .35s forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion:reduce){
+  .draw{animation:none;stroke-dashoffset:0}
+  .caret{animation:none}
+}
+
+/* ---------- spectrum divider ---------- */
+.spectrum{display:grid;grid-template-columns:repeat(4,1fr);font-size:10.5px;letter-spacing:.12em;color:var(--dim)}
+.spectrum > div{padding:12px 14px;border-right:var(--rail);display:flex;justify-content:space-between}
+.spectrum > div:last-child{border-right:0}
+.spectrum .bar{height:4px;display:block}
+
+/* ---------- pipeline ---------- */
+.pipe{display:grid;grid-template-columns:repeat(4,1fr);border-top:var(--rail)}
+.step{padding:28px clamp(14px,2vw,26px) 34px;border-right:var(--rail);position:relative}
+.step:last-child{border-right:0}
+.step .n{font-size:34px;line-height:1;color:var(--line-2);font-family:"Instrument Serif",serif}
+.step h3{margin:14px 0 9px;font-size:15px;font-weight:500}
+.step p{font-size:12.5px;color:var(--fg-2)}
+.step .ms{margin-top:16px;font-size:10.5px;color:var(--dim);letter-spacing:.08em;
+          border-top:1px solid var(--line);padding-top:10px}
+
+/* ---------- verdict stamps ---------- */
+.stamps{display:grid;grid-template-columns:repeat(4,1fr);border-top:var(--rail)}
+@media(max-width:1080px){.stamps{grid-template-columns:repeat(2,1fr)}
+  .stamp:nth-child(2){border-right:0}}
+.stamp{padding:30px clamp(14px,2vw,28px) 34px;border-right:var(--rail);text-align:center}
+.stamp:last-child{border-right:0}
+.stamp .seal{width:118px;height:118px;margin:0 auto 20px;display:block}
+.stamp h3{font-size:19px;letter-spacing:.14em;font-weight:700}
+.stamp p{font-size:12.5px;color:var(--fg-2);margin-top:12px;text-align:left}
+.stamp ul{margin-top:16px;display:grid;gap:7px;font-size:11.5px;color:var(--dim);text-align:left}
+.stamp li::before{content:"— ";color:var(--line-2)}
+.s-ok h3{color:var(--mint)} .s-esc h3{color:var(--gold)} .s-deny h3{color:var(--rose)}
+
+/* ---------- escalation ---------- */
+.esc{display:grid;grid-template-columns:1fr 440px;border-top:var(--rail)}
+.esc-l{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);border-right:var(--rail)}
+.esc-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center;
+       justify-content:center;position:relative;overflow:hidden}
+.esc-r .halo{position:absolute;width:520px;height:520px;opacity:.35;pointer-events:none}
+.flow{display:grid;font-size:12px;margin-top:28px;max-width:520px}
+.node{border:1px solid var(--line);padding:12px 14px;background:var(--ink-2);display:flex;gap:14px;align-items:center}
+.node .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.1em;width:88px;flex:none}
+.arrow{height:24px;border-left:1px dashed var(--line-2);margin-left:24px}
+.branch{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.node.ok{border-color:rgba(61,230,168,.38)}
+.node.esc{border-color:rgba(255,176,32,.45)}
+
+.device{position:relative;z-index:1;width:290px;border:1px solid var(--line-2);background:var(--ink-3)}
+.device .screen{background:#04060C;border-bottom:1px solid var(--line);padding:18px 16px;min-height:158px}
+.device .t{font-size:10px;color:var(--gold);letter-spacing:.16em}
+.device .m{font-size:13.5px;margin-top:14px;line-height:1.45}
+.device .m b{color:var(--gold);font-weight:500}
+.device .f{font-size:10.5px;color:var(--dim);margin-top:16px}
+.device .keys{display:grid;grid-template-columns:1fr 1fr;font-size:11px}
+.device .keys div{padding:12px;text-align:center}
+.device .keys div:first-child{border-right:1px solid var(--line);color:var(--rose)}
+.device .keys div:last-child{color:var(--mint)}
+
+/* ---------- paper certificate section ---------- */
+.paper{
+  background:var(--paper);
+  color:var(--p-ink);
+  border-top:var(--rail);
+  position:relative;overflow:hidden;
+}
+/* engraved hatching, the texture of security printing */
+.paper::before{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:repeating-linear-gradient(90deg, rgba(20,24,28,.055) 0 1px, transparent 1px 7px);
+}
+.paper-grid{position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr}
+.paper-l{padding:clamp(34px,4.5vw,60px) clamp(16px,3.2vw,44px);border-right:1px solid rgba(20,24,28,.18)}
+.paper-r{padding:clamp(28px,3.5vw,44px) clamp(16px,3.2vw,44px);position:relative}
+.paper .tag{color:var(--p-dim)}
+.paper .tag b{color:#6B3FD4}
+.paper h2.head em{color:#6B3FD4}
+.paper .lead{color:#3D4247}
+.paper .rosette{position:absolute;right:-120px;bottom:-120px;width:420px;height:420px;opacity:.22}
+
+.facts{margin-top:30px;border-top:1px solid rgba(20,24,28,.22)}
+.fact{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:13px 0;
+      border-bottom:1px solid rgba(20,24,28,.22);font-size:12.5px}
+.fact dt{color:var(--p-dim)}
+.fact dd{margin:0;color:#2A2F34}
+
+.cert{position:relative;z-index:1;border:1px solid rgba(20,24,28,.35);background:rgba(255,255,255,.42);
+      box-shadow:0 20px 50px -30px rgba(20,24,28,.6)}
+.cert .ch{border-bottom:1px solid rgba(20,24,28,.22);padding:9px 14px;font-size:10.5px;
+          color:var(--p-dim);letter-spacing:.1em;display:flex;justify-content:space-between}
+.cert pre{margin:0;padding:16px 14px;font-size:11.5px;line-height:1.75;overflow-x:auto;white-space:pre}
+.cert .k{color:#2F5EA8}
+.cert .s{color:#1F2A33}
+.cert .n{color:#8A3FA8}
+.cert .c{color:#8C8578}
+.cert .y{color:#9C6100;font-weight:700}
+.cert .stampmark{position:absolute;right:16px;bottom:14px;width:96px;height:96px;opacity:.85;
+                 transform:rotate(-13deg)}
+
+/* ---------- dark code blocks ---------- */
+.code{border:1px solid var(--line);background:var(--ink-2);font-size:12px;line-height:1.7;overflow-x:auto}
+.code .ch{border-bottom:1px solid var(--line);padding:9px 14px;color:var(--dim);font-size:10.5px;
+          letter-spacing:.1em;display:flex;gap:12px}
+.code .ch .fname{color:var(--fg-2)}
+.code pre{margin:0;padding:15px 14px;white-space:pre}
+.k{color:#8FA6FF} .s{color:var(--fg)} .n{color:#C79BFF} .c{color:var(--dim)}
+.g{color:var(--mint)} .y{color:var(--gold)}
+
+/* ---------- coverage ---------- */
+.matrix{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 clamp(34px,4vw,54px)}
+.matrix th,.matrix td{border:1px solid var(--line);padding:11px 13px;text-align:left}
+.matrix thead th{color:var(--dim);font-weight:400;font-size:10.5px;letter-spacing:.1em;background:var(--ink-2)}
+.matrix tbody th{font-weight:400}
+.matrix td{color:var(--fg-2)}
+.matrix .ok{color:var(--mint)}
+.matrix .soon{color:var(--dim)}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;border:1px solid var(--line);border-bottom:0;width:fit-content;max-width:100%;overflow-x:auto}
+.tabs button{background:transparent;border:0;border-right:1px solid var(--line);color:var(--dim);
+             font-family:inherit;font-size:12px;padding:10px 17px;cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--violet);background:var(--ink-2)}
+.tabs button:last-child{border-right:0}
+[hidden]{display:none}
+
+/* ---------- numbers ---------- */
+.nums{display:grid;grid-template-columns:repeat(4,1fr);border-top:var(--rail)}
+/* Three figures, not four with a hole where a fourth used to be. */
+.nums.three{grid-template-columns:repeat(3,1fr)}
+.num{padding:28px clamp(14px,2vw,26px) 32px;border-right:var(--rail)}
+.num:last-child{border-right:0}
+.num .big{font-family:"Instrument Serif",serif;font-size:clamp(30px,4vw,44px);line-height:1}
+.num .lb{font-size:11.5px;color:var(--dim);margin-top:10px}
+
+.num .big.live{color:var(--fg)}
+.num .big.pending{color:var(--line-2)}
+/* Aligned to the figures it annotates, not to the page rail: the numbers grid
+   indents by its own cell padding, and borrowing `.pad` instead left the line
+   sitting eighteen pixels inside the column it describes. Flex rather than
+   inline so a wrapped second line hangs under the text and not under the dot. */
+.live-note{display:flex;gap:8px;align-items:baseline;max-width:92ch;
+           font-size:10.5px;color:var(--dim);letter-spacing:.08em;line-height:1.6;
+           padding:16px clamp(14px,2vw,26px) 28px}
+.live-note i{flex:none;width:6px;height:6px;border-radius:50%;
+             background:var(--line-2);transform:translateY(-1px)}
+.live-note.on i{background:var(--mint)}
+.live-note.off i{background:var(--rose)}
+
+/* ---------- cta ---------- */
+.cta{position:relative;overflow:hidden}
+.cta .inner{position:relative;z-index:1;
+  /* Two classes beat `.pad`, so its horizontal rhythm has to be restated
+     here or the heading sits flush against the frame. */
+  padding:clamp(52px,7vw,96px) clamp(16px,3.2vw,44px)}
+.cta h2{font-size:clamp(30px,5vw,56px);line-height:1.04;letter-spacing:-.02em;max-width:18ch;font-weight:500}
+.cta .ros{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:640px;height:640px;opacity:.3}
+
+/* ---------- footer ---------- */
+/* `footer.pad` rather than `footer`: a bare type selector loses to `.pad`,
+   which zeroes the vertical padding and pins the footer to the rule above
+   it. The extra top space also gives the last section room to end. */
+footer.pad{padding:clamp(46px,5vw,68px) clamp(16px,3.2vw,44px) 46px}
+footer{font-size:12px;color:var(--dim)}
+.fgrid{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;gap:28px}
+footer h4{margin:0 0 13px;font-size:10.5px;color:var(--fg-2);font-weight:400;letter-spacing:.12em}
+footer li{margin-bottom:8px}
+footer a:hover{color:var(--violet)}
+.fnote{margin-top:36px;padding-top:18px;border-top:1px solid var(--line);display:flex;
+       justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:11px}
+
+/* ---------- responsive ---------- */
+@media (max-width:1040px){
+  .hero-grid,.esc,.paper-grid{grid-template-columns:1fr}
+  .hero-l,.esc-l,.paper-l{border-right:0;border-bottom:var(--rail)}
+  .paper-l{border-bottom:1px solid rgba(20,24,28,.18)}
+  .pipe,.nums{grid-template-columns:1fr 1fr}
+  .step:nth-child(2),.num:nth-child(2){border-right:0}
+  .step:nth-child(-n+2),.num:nth-child(-n+2){border-bottom:var(--rail)}
+  .stamps{grid-template-columns:1fr}
+  .stamp{border-right:0;border-bottom:var(--rail)}
+  .stamp:last-child{border-bottom:0}
+  .watermark{right:-280px;opacity:.3}
+  .fgrid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:680px){
+  nav,.pulse{display:none}
+  .pipe,.nums,.spectrum{grid-template-columns:1fr}
+  .step,.num{border-right:0;border-bottom:var(--rail)}
+  .spectrum > div{border-right:0;border-bottom:var(--rail)}
+  .branch{grid-template-columns:1fr}
+  .kv{grid-template-columns:86px 1fr}
+  .matrix{display:block;overflow-x:auto;white-space:nowrap}
+  .fgrid{grid-template-columns:1fr}
+  .device{width:100%;max-width:290px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="shell pad">
+    <div class="bar">
+      <a class="mark" href="#top">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="18" fill="none" stroke="#8B6BFF" stroke-width="1.4"/>
+          <circle cx="20" cy="20" r="12.5" fill="none" stroke="#8B6BFF" stroke-width=".8" opacity=".6"/>
+          <path d="M20 4 L20 36 M4 20 L36 20" stroke="#8B6BFF" stroke-width=".6" opacity=".35"/>
+          <circle cx="20" cy="20" r="4" fill="#8B6BFF"/>
+        </svg>
+        presign
+      </a>
+      <nav>
+        <a href="#pipeline">Pipeline</a>
+        <a href="#verdicts">Verdicts</a>
+        <a href="#escalation">Escalation</a>
+        <a href="#provenance">Provenance</a>
+        <a href="#coverage">Coverage</a>
+        <a href="#numbers">Numbers</a>
+      </nav>
+      <div class="right">
+        <!-- Filled from /health, or left saying so. Never a number typed in by hand. -->
+        <span class="pulse" id="pulse"><i style="background:var(--line-2)"></i>reading /health…</span>
+        <a class="btn" href="#integrate">API</a>
+        <a class="btn solid" href="https://github.com/n0ctr1/presign">GitHub</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="shell pad" style="border-bottom:1px solid var(--line)">
+  <!-- Real entries from the HCS journal, read straight from the public mirror
+       node. Anyone can fetch the same topic and get the same rows. -->
+  <div class="ticker" id="ticker">
+    <span class="tick"><b>·</b><span>reading the verdict journal…</span></span>
+  </div>
+</div>
+
+<main class="shell" id="top">
+
+  <!-- ================= HERO ================= -->
+  <section class="hero">
+    <svg class="watermark" id="wm" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
+
+    <div class="hero-grid">
+      <div class="hero-l">
+        <p class="tag">PRE-SIGNATURE RISK FOR AGENT WALLETS · <b>live on Hedera testnet</b></p>
+        <h1>Every verdict says<span class="l2">how stale it is.</span></h1>
+        <p class="lead">
+          Acting before the signature is not the novel part — Hexagate, Blockaid and GoPlus all do it.
+          What none of them return is the age of the evidence behind the answer. A green verdict
+          computed from six-hour-old context looks identical to one computed at chain head, and
+          before a signature that difference is the entire risk.
+        </p>
+
+        <div class="hero-cta">
+          <a class="btn solid" href="#numbers">See the live service</a>
+          <a class="btn" href="https://github.com/n0ctr1/presign">Read the code</a>
+        </div>
+
+        <div class="cmd">
+          <span class="p">$</span>
+          <span>curl -s https://presign.dev/quote<span class="caret"></span></span>
+        </div>
+
+        <div class="chips">
+          <span class="chip">ETHEREUM</span><span class="chip">BASE</span><span class="chip">ARBITRUM</span>
+          <span class="chip">OPTIMISM</span><span class="chip">POLYGON</span><span class="chip">THE GRAPH</span>
+          <span class="chip">HEDERA</span><span class="chip">LEDGER</span><span class="chip">x402</span>
+          <span class="chip">MCP</span>
+        </div>
+      </div>
+
+      <div class="hero-r">
+        <div class="intercept">
+          <div class="ip-top"><span>VERDICT</span><span class="id">POST /verdict/full · 2751 ms</span></div>
+          <div class="ip-body">
+            <dl class="kv">
+              <dt>chain</dt><dd>ethereum · 1</dd>
+              <dt>action</dt><dd>erc20.approve on USDC</dd>
+              <dt>spender</dt><dd>0x000000…deadbeef</dd>
+              <dt>allowance</dt><dd class="warn">unlimited (2^256−1)</dd>
+              <dt>simulated at</dt><dd>block 25 932 605</dd>
+            </dl>
+
+            <div class="verdict">
+              <div class="vhead">
+                <span class="vword">MEDIUM</span>
+                <span class="vscore">escalation <b>required</b></span>
+              </div>
+              <ul class="reasons">
+                <li><span class="w">!</span><span>Unlimited approval to a spender in the incident registry</span><span class="src">state diff</span></li>
+                <li><span class="w">!</span><span>Upgradeable contract controlled by a single key</span><span class="src">storage slot</span></li>
+                <li><span class="w">·</span><span>No upgrade in the watched window — not evidence of none before it</span><span class="src">substreams</span></li>
+              </ul>
+            </div>
+          </div>
+          <div class="ip-foot">
+            <span>paid <b>0.005 HBAR</b></span>
+            <span>journalled <b>topic 0.0.10413192</b></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- The signature is drawn, then stops dead at the checkpoint. -->
+    <figure class="sigband">
+      <div class="inner">
+        <svg viewBox="0 0 1180 190" preserveAspectRatio="xMidYMid meet" aria-label="A signature stroke halted at a verification gate">
+          <defs>
+            <clipPath id="before"><rect x="0" y="0" width="742" height="190"/></clipPath>
+            <clipPath id="after"><rect x="742" y="0" width="438" height="190"/></clipPath>
+            <linearGradient id="sigGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#8B6BFF" stop-opacity=".35"/>
+              <stop offset="1" stop-color="#8B6BFF" stop-opacity="1"/>
+            </linearGradient>
+          </defs>
+
+          <line x1="0" y1="150" x2="1180" y2="150" stroke="#1A2337" stroke-width="1"/>
+
+          <g clip-path="url(#before)">
+            <path class="draw" d="M20 142 C 70 60, 96 18, 128 34 C 158 49, 132 128, 106 140
+              C 84 150, 88 108, 122 92 C 168 70, 214 132, 258 128 C 300 124, 316 52, 350 46
+              C 380 41, 372 122, 344 138 C 322 150, 320 96, 356 82 C 400 65, 442 120, 486 124
+              C 528 128, 560 74, 596 66 C 630 58, 646 96, 676 112 C 700 125, 722 122, 742 108"
+              fill="none" stroke="url(#sigGrad)" stroke-width="2.6" stroke-linecap="round"/>
+          </g>
+
+          <g clip-path="url(#after)" opacity=".3">
+            <path d="M742 108 C 772 92, 800 34, 836 40 C 872 46, 856 126, 828 140
+              C 806 150, 812 100, 850 88 C 900 72, 946 126, 992 122 C 1036 118, 1074 66, 1112 78
+              C 1140 87, 1152 116, 1160 138"
+              fill="none" stroke="#98A6C1" stroke-width="2.2" stroke-linecap="round"
+              stroke-dasharray="5 7"/>
+          </g>
+
+          <line x1="742" y1="8" x2="742" y2="182" stroke="#FFB020" stroke-width="1.2" stroke-dasharray="4 5"/>
+          <circle cx="742" cy="108" r="5.5" fill="#06080F" stroke="#FFB020" stroke-width="1.6"/>
+          <text x="754" y="26" fill="#FFB020" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.6">VERDICT REQUIRED</text>
+        </svg>
+        <figcaption class="sig-caption">
+          <span>the stroke stops here until the engine answers</span>
+          <span><b>fail closed</b> · no fresh context, no green verdict</span>
+        </figcaption>
+      </div>
+    </figure>
+  </section>
+
+  <!-- ================= SPECTRUM ================= -->
+  <section>
+    <div class="spectrum">
+      <div><span>LOW</span><span style="color:var(--mint)">signs unattended</span></div>
+      <div><span>MEDIUM</span><span style="color:var(--gold)">waits for a hand</span></div>
+      <div><span>HIGH</span><span style="color:var(--rose)">refused outright</span></div>
+      <div><span>UNAVAILABLE</span><span style="color:var(--slate)">could not be judged</span></div>
+    </div>
+    <div style="display:grid;grid-template-columns:38% 26% 18% 18%">
+      <span class="bar" style="background:var(--mint)"></span>
+      <span class="bar" style="background:var(--gold)"></span>
+      <span class="bar" style="background:var(--rose)"></span>
+      <span class="bar" style="background:var(--slate)"></span>
+    </div>
+  </section>
+
+  <!-- ================= PIPELINE ================= -->
+  <section id="pipeline">
+    <div class="pad">
+      <div class="sec-head">
+        <p class="tag">WHAT A VERDICT ACTUALLY COSTS</p>
+        <h2 class="head">Rules read the transaction's <em>effects, not its calldata.</em></h2>
+        <p class="lead">Calldata says what a transaction claims to do. The state diff says what it
+          does, and the two part company exactly where it matters — a router, a multicall, or a
+          permit forwarding an approval on somebody's behalf.</p>
+      </div>
+    </div>
+    <div class="pipe">
+      <div class="step">
+        <p class="n serif">i</p>
+        <h3>Simulate</h3>
+        <p>The unsigned transaction runs against a fork pinned near chain head. Reverts are detected
+           by a separate call, never inferred from an empty diff.</p>
+        <p class="ms">FORK RE-TAKEN EVERY 5 MIN</p>
+      </div>
+      <div class="step">
+        <p class="n serif">ii</p>
+        <h3>Read state</h3>
+        <p>R1 recovers the allowance slot from the diff and proves an unlimited approval. R2 reads
+           proxy slots directly, because admin getters revert for everyone but the admin.</p>
+        <p class="ms">RPC ONLY · NO INDEXER</p>
+      </div>
+      <div class="step">
+        <p class="n serif">iii</p>
+        <h3>Ask the layer</h3>
+        <p>R3 checks protocol accounting against deployments that index this counterparty and sit
+           inside a freshness budget. R4 asks whether anyone has ever indexed it at all.</p>
+        <p class="ms">FRESHNESS-GATED · 30 S BUDGET</p>
+      </div>
+      <div class="step">
+        <p class="n serif">iv</p>
+        <h3>Tier</h3>
+        <p>A definite finding outranks uncertainty. The absence of findings does not — a rule that
+           could not run turns an otherwise clean result into <em>unavailable</em>.</p>
+        <p class="ms">FOUR OUTCOMES, NO FIFTH</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= VERDICT STAMPS ================= -->
+  <section id="verdicts">
+    <div class="pad">
+      <div class="sec-head">
+        <p class="tag">THE FOURTH OUTCOME IS THE POINT</p>
+        <h2 class="head">"Nothing found" and "could not look" <em>are different answers.</em></h2>
+        <p class="lead">Collapse them and a green verdict becomes reachable on data nobody ever
+          saw. <em>unavailable</em> is a tier in the type system, not an error code, so a rule that
+          fails cannot be mistaken for a rule that found nothing.</p>
+      </div>
+    </div>
+    <div class="stamps">
+      <div class="stamp s-ok">
+        <svg class="seal" data-seal="ok" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        <h3>LOW</h3>
+        <p>Every rule ran and none found anything, against sources named in the response with the
+           lag each one carried.</p>
+        <ul><li>signs without confirmation</li><li>source and lag reported</li><li>journalled to Hedera</li></ul>
+      </div>
+      <div class="stamp s-esc">
+        <svg class="seal" data-seal="esc" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        <h3>MEDIUM</h3>
+        <p>Real but standing — an upgradeable proxy, a bounded approval. True of most of DeFi, so it
+           asks a human rather than refusing.</p>
+        <ul><li>escalates to a Ledger</li><li>device shows the decoded intent</li><li>only a refusal counts as one</li></ul>
+      </div>
+      <div class="stamp s-deny">
+        <svg class="seal" data-seal="deny" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        <h3>HIGH</h3>
+        <p>An implementation swap inside the judged transaction, protocol accounting that cannot
+           add up, or a counterparty deployed hours ago that nobody has indexed.</p>
+        <ul><li>never reaches the device</li><li>a prompt is a request, and people approve prompts</li><li>reason returned to the agent</li></ul>
+      </div>
+      <div class="stamp s-una">
+        <svg class="seal" data-seal="una" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        <h3>UNAVAILABLE</h3>
+        <p>Fresh context could not be obtained. Not a softer <em>low</em>: the honest answer is that
+           this transaction was not evaluated.</p>
+        <ul><li>every rule that failed is named</li><li>with the reason it failed</li><li>no payment is taken</li></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ESCALATION ================= -->
+  <section id="escalation">
+    <div class="esc">
+      <div class="esc-l">
+        <p class="tag">THE DEVICE IS NOT A NOTIFICATION</p>
+        <h2 class="head" style="margin:16px 0 18px">Only <em>medium</em> reaches a human.<br><em>High never does.</em></h2>
+        <p class="lead">Showing somebody a transaction already judged dangerous invites approval,
+          because a prompt is a request and people approve prompts. The policy is re-checked inside
+          the confirmation path, and a test asserts the signer is never even constructed.</p>
+
+        <div class="flow">
+          <div class="node"><span class="lbl">AGENT</span><span>builds the intent · holds the key</span></div>
+          <div class="arrow"></div>
+          <div class="node esc"><span class="lbl">PRESIGN</span><span>tier + findings + provenance</span></div>
+          <div class="arrow"></div>
+          <div class="branch">
+            <div class="node ok"><span class="lbl" style="width:auto">LOW</span><span>signs unattended</span></div>
+            <div class="node esc"><span class="lbl" style="width:auto">MEDIUM</span><span>→ Ledger, clear-signed</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="esc-r">
+        <svg class="halo" id="halo" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
+        <div class="device" role="img" aria-label="Hardware wallet screen showing an escalated confirmation">
+          <div class="screen">
+            <p class="t">PRESIGN · CONFIRM</p>
+            <p class="m">Approve <b>1 000 USDC</b> for a spender listed in the incident registry.</p>
+            <p class="m" style="color:var(--fg-2)">USDC is an upgradeable proxy; its admin is a plain EOA.</p>
+            <p class="f">decline reads as 6985 — a decision, not a fault</p>
+          </div>
+          <div class="keys"><div>◀ Reject</div><div>Hold to approve ▶</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PROVENANCE (paper) ================= -->
+  <section id="provenance" class="paper">
+    <svg class="rosette" id="ros-paper" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
+    <div class="paper-grid">
+      <div class="paper-l">
+        <p class="tag">THE FIELD THE INCUMBENTS DO NOT RETURN</p>
+        <h2 class="head" style="margin:16px 0 18px">Provenance, <em>down to the lag.</em></h2>
+        <p class="lead">A verdict a caller cannot check is a number they have to trust, and
+          unverifiable risk scores are what the incumbents already sell. Every answer names the
+          deployment that produced it and how far behind chain head that deployment was.</p>
+
+        <dl class="facts">
+          <div class="fact"><dt>Aged, not trusted</dt><dd>Effective lag is the measured lag plus the age of the measurement, so a warm cache cannot turn stale data green.</dd></div>
+          <div class="fact"><dt>Independent head</dt><dd>Chain head comes from an RPC, never the indexer. One source for both would read a stalled indexer as a healthy one.</dd></div>
+          <div class="fact"><dt>Pinned, not floating</dt><dd>Queries address an immutable deployment id. A subgraph id drifts to whatever its owner publishes next.</dd></div>
+          <div class="fact"><dt>Never ordered by score</dt><dd>The registry's reliability score tracks traction, and therefore age. Sorting by it would reintroduce the bias the layer removes.</dd></div>
+        </dl>
+      </div>
+
+      <div class="paper-r">
+        <div class="cert">
+          <div class="ch"><span>POST /verdict/full</span><span>200 OK · 2751 ms</span></div>
+<pre><span class="c">// Verbatim from the live service. Same call, two budgets.</span>
+{
+  <span class="k">"decision"</span>: <span class="y">"escalation_required"</span>,
+  <span class="k">"verdict"</span>: {
+    <span class="k">"tier"</span>:   <span class="y">"medium"</span>,
+    <span class="k">"action"</span>: <span class="s">"Escalate to on-device human confirmation."</span>,
+
+    <span class="c">// Provenance travels with the answer, not beside it.</span>
+    <span class="k">"provenance"</span>: {
+      <span class="k">"simulatedAtBlock"</span>: <span class="n">25932605</span>,
+      <span class="k">"sources"</span>: [
+        { <span class="k">"displayName"</span>:          <span class="s">"Aave V3 Ethereum"</span>,
+          <span class="k">"deploymentId"</span>:         <span class="s">"QmcXE5QVcBcv…"</span>,
+          <span class="k">"effectiveLagSeconds"</span>:  <span class="n">13.3</span> }
+      ],
+      <span class="c">// Empty is meaningful. A rule listed here did not run.</span>
+      <span class="k">"unavailableRules"</span>: []
+    }
+  },
+
+  <span class="c">// Both sides of the trade, in the same object.</span>
+  <span class="k">"cost"</span>: {
+    <span class="k">"charged"</span>:      <span class="s">"0.005 HBAR"</span>,
+    <span class="k">"paid_upstream"</span>: { <span class="k">"funding"</span>: <span class="s">"x402"</span>,
+                       <span class="k">"total"</span>:   <span class="s">"0.01 USDC"</span> }
+  },
+
+  <span class="k">"journal"</span>: { <span class="k">"topic"</span>: <span class="s">"0.0.10413192"</span>, <span class="k">"sequence"</span>: <span class="n">13</span> }
+}</pre>
+          <svg class="stampmark" viewBox="-60 -60 120 120" aria-hidden="true">
+            <circle cx="0" cy="0" r="52" fill="none" stroke="#9C6100" stroke-width="2.5"/>
+            <circle cx="0" cy="0" r="45" fill="none" stroke="#9C6100" stroke-width="1"/>
+            <text x="0" y="-6" text-anchor="middle" fill="#9C6100" font-family="JetBrains Mono, monospace"
+                  font-size="13" font-weight="700" letter-spacing="1">HELD</text>
+            <text x="0" y="12" text-anchor="middle" fill="#9C6100" font-family="JetBrains Mono, monospace"
+                  font-size="7" letter-spacing=".8">PENDING KEY</text>
+            <line x1="-45" y1="22" x2="45" y2="22" stroke="#9C6100" stroke-width="1"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= COVERAGE ================= -->
+  <section id="coverage">
+    <div class="pad">
+      <div class="sec-head">
+        <p class="tag">MEASURED, NOT ESTIMATED · npm run coverage</p>
+        <h2 class="head">One rule, one standard schema, <em>every protocol that speaks it.</em></h2>
+        <p class="lead">Rules bind to schema families rather than to protocols. Nothing is added for
+          a new protocol inside a family already read — it is covered the moment somebody indexes it
+          with the standard schema. A line of code buys a new family, and the rows below are what
+          three of those lines bought.</p>
+      </div>
+      <table class="matrix">
+        <thead><tr><th>Schema family</th><th>Ethereum</th><th>Optimism</th><th>Polygon</th><th>Base</th><th>Arbitrum</th></tr></thead>
+        <tbody>
+          <tr><th>lending-cdp</th><td class="ok">6</td><td class="ok">3</td><td class="ok">3</td><td class="ok">4</td><td class="ok">6</td></tr>
+          <tr><th>dex-amm</th><td class="ok">2</td><td class="ok">2</td><td class="ok">1</td><td class="ok">1</td><td class="ok">2</td></tr>
+          <tr><th>yield-vault</th><td class="ok">2</td><td class="soon">0</td><td class="soon">0</td><td class="soon">0</td><td class="ok">1</td></tr>
+        </tbody>
+      </table>
+      <p class="lead" style="margin:-24px 0 clamp(34px,4vw,54px)">
+        33 conforming deployments — Aave V2 and V3, Compound V2 and V3, Morpho Blue, DForce, Sonne,
+        Radiant, Seamless, Curve, Uniswap V3, Velodrome V2, Sushiswap, Yearn V2, Rari — reachable
+        with no per-protocol code. The thin row is honest too: <em>yield-vault</em> is where coverage
+        runs out.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= INTEGRATION ================= -->
+  <section id="integrate">
+    <div class="pad">
+      <div class="sec-head">
+        <p class="tag">NO KEY, NO ACCOUNT, NO SUBSCRIPTION</p>
+        <h2 class="head">Ask the price first, <em>then decide to pay.</em></h2>
+        <p class="lead">The quote and the 402 body are readable without any credential, so an agent
+          — or a person — sees what a verdict costs and what it buys before spending anything.</p>
+        <p class="lead" style="color:var(--fg)">If you are an agent, skip this page.
+          <a href="/llms.txt" style="color:var(--violet);border-bottom:1px solid var(--line-2)">/llms.txt</a>
+          is the same surface with no markup in the way: every endpoint, the payment exchange, the
+          response fields, and what each of the four tiers obliges you to do.</p>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Integration examples">
+        <button role="tab" aria-selected="true"  aria-controls="p-ts"  id="t-ts">curl · x402</button>
+        <button role="tab" aria-selected="false" aria-controls="p-py"  id="t-py">MCP · data layer</button>
+        <button role="tab" aria-selected="false" aria-controls="p-pol" id="t-pol">what you get back</button>
+      </div>
+
+      <div class="code" role="tabpanel" id="p-ts" aria-labelledby="t-ts">
+        <div class="ch"><span class="fname">terminal</span></div>
+<pre><span class="c"># Free: what a verdict costs and which rules it runs.</span>
+curl -s https://presign.dev/quote
+
+<span class="c"># Free: what the service can currently see.</span>
+curl -s https://presign.dev/health
+
+<span class="c"># Paid: 402 with a machine-readable manifest, then an x402</span>
+<span class="c"># payment on Hedera, then the answer. 0.005 HBAR.</span>
+curl -sX POST https://presign.dev/verdict/full \
+  -H <span class="s">'content-type: application/json'</span> \
+  -d <span class="s">'{"transaction":{"from":"0x…","to":"0x…","value":"0",</span>
+<span class="s">       "data":"0x095ea7b3…","chainId":1}}'</span></pre>
+      </div>
+
+      <div class="code" role="tabpanel" id="p-py" aria-labelledby="t-py" hidden>
+        <div class="ch"><span class="fname">the data layer, without the opinions</span></div>
+<pre><span class="c"># Freshness-gated source selection ships as its own MCP server, so</span>
+<span class="c"># another team can use it without adopting our rules or simulation.</span>
+claude mcp add presign -- npx -y @presign/mcp-server
+
+<span class="c"># Seven tools. The ones nothing else answers:</span>
+<span class="c">#   resolve_rule_capability     which deployments can serve a rule now</span>
+<span class="c">#   check_deployment_freshness  lag from an independently-read chain head</span>
+<span class="c">#   check_proxy_upgrade_history when a proxy's logic last changed</span>
+
+<span class="c"># An upgrade is an event. Current state says what the implementation</span>
+<span class="c"># is now and never when it became that, so no schema carries it —</span>
+<span class="c"># it comes from a live Substreams stream instead.</span></pre>
+      </div>
+
+      <div class="code" role="tabpanel" id="p-pol" aria-labelledby="t-pol" hidden>
+        <div class="ch"><span class="fname">the same call, two freshness budgets</span></div>
+<pre><span class="c"># The claim this project makes, reduced to one experiment.</span>
+
+budget 30s  →  <span class="g">low</span>
+               source: Aave V3 Ethereum (QmcXE5QVcBcv…)
+               effective lag: <span class="n">13.3</span>s
+
+budget  1s  →  <span class="y">unavailable</span>
+               R3: all_candidates_stale
+               <span class="c"># 2 deployments index this contract and speak the</span>
+               <span class="c"># lending schema; neither is within 1s of head.</span>
+
+<span class="c"># Same protocol. Same data. Same code path. Only the budget</span>
+<span class="c"># changed — and a clean answer became unreachable.</span></pre>
+      </div>
+      <div style="height:clamp(34px,4vw,54px)"></div>
+    </div>
+  </section>
+
+  <!-- ================= NUMBERS ================= -->
+  <section id="numbers">
+    <div class="pad" style="padding-top:clamp(32px,4vw,50px);padding-bottom:4px">
+      <p class="tag">LIVE FROM THE RUNNING SERVICE</p>
+    </div>
+    <div class="nums">
+      <div class="num"><p class="big pending" id="n-rules">—</p><p class="lb">rules this instance runs</p></div>
+      <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks watched for proxy upgrades</p></div>
+      <div class="num"><p class="big pending" id="n-proxies">—</p><p class="lb">proxies seen upgrading</p></div>
+      <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict</p></div>
+    </div>
+    <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
+
+    <div class="pad" style="padding-bottom:4px">
+      <p class="tag">MEASURED ON THIS BUILD · npm run latency · npm run safety</p>
+    </div>
+    <div class="nums three">
+      <div class="num"><p class="big">394 ms</p><p class="lb">cold verdict on USDC, whole call</p></div>
+      <div class="num"><p class="big">8 ms</p><p class="lb">warm, same counterparty</p></div>
+      <div class="num"><p class="big">0</p><p class="lb">of 12 undisputed mainnet contracts refused</p></div>
+    </div>
+    <p class="live-note" style="opacity:.85"><i></i>
+      <span>Cold is the first verdict for a counterparty; warm is the repeats after it. The false-positive
+      fixture exits non-zero if anything reaches <em>high</em>, so it gates a release rather than being
+      read and shrugged at.</span></p>
+  </section>
+
+  <!-- ================= CTA ================= -->
+  <section id="cta" class="cta">
+    <svg class="ros" id="ros-cta" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
+    <div class="pad inner">
+      <h2>Give an agent a verdict <em class="serif" style="color:var(--violet)">it can check.</em></h2>
+      <div class="hero-cta">
+        <a class="btn solid" href="https://presign.dev/quote">Live quote</a>
+        <a class="btn" href="https://presign.dev/health">Health</a>
+        <a class="btn" href="https://github.com/n0ctr1/presign">GitHub</a>
+      </div>
+      <div class="cmd" style="max-width:680px">
+        <span class="p">$</span><span>curl -s https://presign.dev/health</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="pad">
+    <div class="fgrid">
+      <div>
+        <p class="mark" style="margin-bottom:14px">
+          <svg viewBox="0 0 40 40" aria-hidden="true">
+            <circle cx="20" cy="20" r="18" fill="none" stroke="#8B6BFF" stroke-width="1.4"/>
+            <circle cx="20" cy="20" r="12.5" fill="none" stroke="#8B6BFF" stroke-width=".8" opacity=".6"/>
+            <circle cx="20" cy="20" r="4" fill="#8B6BFF"/>
+          </svg>presign
+        </p>
+        <p style="max-width:36ch">An advisor, never a co-signer. It holds no keys and broadcasts
+          nothing — including its own payments, which are signed authorisations a facilitator
+          submits.</p>
+      </div>
+      <div><h4>SERVICE</h4><ul>
+        <li><a href="https://presign.dev/quote">Quote</a></li><li><a href="https://presign.dev/health">Health</a></li>
+        <li><a href="https://api.presign.dev/quote">api.presign.dev</a></li></ul></div>
+      <div><h4>RECORD</h4><ul>
+        <li><a href="https://hashscan.io/testnet/topic/0.0.10413192">Verdict journal on HCS</a></li>
+        <li><a href="https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10413192/messages">…the same, as JSON</a></li>
+        <li><a href="https://github.com/n0ctr1/presign/tree/main/docs/feedback">Tooling feedback</a></li>
+        <li><a href="https://github.com/n0ctr1/presign/blob/main/docs/setup/deploy.md">Deployment notes</a></li></ul></div>
+      <div><h4>CODE</h4><ul>
+        <li><a href="/llms.txt">/llms.txt — for agents</a></li>
+        <li><a href="https://github.com/n0ctr1/presign">Repository</a></li>
+        <li><a href="https://github.com/n0ctr1/presign/blob/main/packages/mcp-server/SKILL.md">MCP SKILL.md</a></li>
+        <li><a href="https://github.com/n0ctr1/presign#what-a-verdict-costs">What a verdict costs</a></li></ul></div>
+    </div>
+    <div class="fnote">
+      <span>ETHOnline 2026 · testnet only — do not point production keys at this endpoint.</span>
+      <span>a green verdict is unreachable without fresh context</span>
+    </div>
+  </footer>
+</main>
+
+
+<script>
+/* ==========================================================================
+   Guilloché engine. Draws hypotrochoid rosettes — the same curve family used
+   on banknotes and share certificates. Pure decoration, generated at load so
+   the markup stays readable.
+   ========================================================================== */
+function rosettePath(R, r, d, turns, steps) {
+  const k = (R - r) / r;
+  let out = "";
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * turns * Math.PI * 2;
+    const x = (R - r) * Math.cos(t) + d * Math.cos(k * t);
+    const y = (R - r) * Math.sin(t) - d * Math.sin(k * t);
+    out += (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+  }
+  return out;
+}
+
+/* Stack several offset rings so the strokes interfere and moiré appears. */
+function drawRosette(svg, opts) {
+  const o = Object.assign(
+    { rings: 5, R: 200, r: 47, d: 105, turns: 47, steps: 1700, color: "#8B6BFF", width: 0.5 },
+    opts || {}
+  );
+  let markup = "";
+  for (let i = 0; i < o.rings; i++) {
+    const scale = 1 - i * 0.11;
+    markup +=
+      '<path d="' + rosettePath(o.R * scale, o.r, o.d * scale, o.turns, o.steps) + '"' +
+      ' fill="none" stroke="' + o.color + '" stroke-width="' + o.width + '"' +
+      ' opacity="' + (0.5 - i * 0.07).toFixed(2) + '"' +
+      ' transform="rotate(' + i * 7 + ')"/>';
+  }
+  svg.innerHTML = markup;
+}
+
+/* Verdict seals: a rosette core inside two rings, coloured by outcome. */
+function drawSeal(svg, color) {
+  const core = rosettePath(74, 21, 40, 21, 900);
+  svg.innerHTML =
+    '<circle r="88" fill="none" stroke="' + color + '" stroke-width="1.6" opacity=".55"/>' +
+    '<circle r="80" fill="none" stroke="' + color + '" stroke-width=".7" opacity=".35"/>' +
+    '<path d="' + core + '" fill="none" stroke="' + color + '" stroke-width=".55" opacity=".85"/>' +
+    '<circle r="7" fill="' + color + '" opacity=".9"/>';
+}
+
+drawRosette(document.getElementById("wm"),        { color: "#8B6BFF", rings: 6, turns: 53 });
+drawRosette(document.getElementById("halo"),      { color: "#FFB020", rings: 4, r: 39, turns: 39, width: 0.45 });
+drawRosette(document.getElementById("ros-paper"), { color: "#6B3FD4", rings: 4, r: 53, turns: 41, width: 0.6 });
+drawRosette(document.getElementById("ros-cta"),   { color: "#8B6BFF", rings: 7, r: 43, turns: 61, width: 0.45 });
+
+const sealColors = { ok: "#3DE6A8", esc: "#FFB020", deny: "#FF4E6A", una: "#7E93C4" };
+document.querySelectorAll("[data-seal]").forEach(function (el) {
+  drawSeal(el, sealColors[el.dataset.seal]);
+});
+
+/* Integration tabs. User-triggered only. */
+const tabs = document.querySelectorAll('[role="tab"]');
+tabs.forEach(function (tab) {
+  tab.addEventListener("click", function () {
+    tabs.forEach(function (t) {
+      t.setAttribute("aria-selected", "false");
+      document.getElementById(t.getAttribute("aria-controls")).hidden = true;
+    });
+    tab.setAttribute("aria-selected", "true");
+    document.getElementById(tab.getAttribute("aria-controls")).hidden = false;
+  });
+});
+
+/* ==========================================================================
+   Live figures, read from the service this page is served alongside.
+   Same origin, so no CORS and no key: /health and /quote are the two
+   endpoints that answer without payment, which is the point of them.
+
+   Failure is shown rather than hidden. A landing page that quietly keeps
+   printing yesterday's numbers when the service is down would be making
+   exactly the mistake the service refuses to make.
+   ========================================================================== */
+(function () {
+  var note = document.getElementById("live-note");
+  var fields = {
+    rules:   document.getElementById("n-rules"),
+    blocks:  document.getElementById("n-blocks"),
+    proxies: document.getElementById("n-proxies"),
+    price:   document.getElementById("n-price")
+  };
+
+  function set(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove("pending");
+    el.classList.add("live");
+  }
+
+  function say(state, text) {
+    if (!note) return;
+    note.className = "live-note " + state;
+    note.innerHTML = "<i></i><span>" + text + "</span>";
+  }
+
+  function group(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  }
+
+  Promise.all([
+    fetch("/health").then(function (r) { return r.json(); }),
+    fetch("/quote").then(function (r) { return r.json(); })
+  ]).then(function (both) {
+    var health = both[0];
+    var quote = both[1];
+
+    set(fields.rules, String((health.rules || []).length));
+
+    var stream = (health.sources || []).filter(function (s) {
+      return s.name === "proxy-upgrade-stream";
+    })[0];
+
+    if (stream) {
+      set(fields.blocks, group(stream.blocks || 0));
+      set(fields.proxies, group(stream.proxies || 0));
+    } else {
+      set(fields.blocks, "none");
+      set(fields.proxies, "none");
+    }
+
+    var full = (quote.routes || {})["/verdict/full"];
+    set(fields.price, full ? full.hbar : "—");
+
+    /*
+     * The stream's liveness is reported, not smoothed over. While it
+     * backfills it has seen nothing, and R2 reads that as unavailable rather
+     * than as a clean history — so saying "live" here when it is not would
+     * contradict the verdict the same service is giving.
+     */
+    var pulse = document.getElementById("pulse");
+    if (pulse) {
+      pulse.innerHTML = '<i style="background:' +
+        (stream && stream.live ? "var(--mint)" : "var(--gold)") + '"></i>' +
+        (stream && stream.live ? "live · " : "backfilling · ") +
+        (health.rules || []).length + " rules";
+    }
+
+    if (stream && stream.live) {
+      say("on", "live · " + (health.rules || []).join(", ") +
+                " · watching from block " + group(stream.firstBlock));
+    } else if (stream) {
+      say("off", "the upgrade stream is not live — R2 reports its history as unavailable, " +
+                 "which is the honest answer for an index that has seen nothing yet");
+    } else {
+      say("off", "no upgrade stream configured on this instance");
+    }
+  }).catch(function () {
+    var pulse = document.getElementById("pulse");
+    if (pulse) pulse.innerHTML = '<i style="background:var(--rose)"></i>service unreachable';
+    say("off", "the service did not answer. These figures are live or absent, never stale.");
+  });
+})();
+
+
+/* ==========================================================================
+   The ticker reads the verdict journal on Hedera Consensus Service, through
+   the public mirror node. These are decisions this service actually made, and
+   the same topic answers the same rows to anybody who asks it.
+
+   The journal records a transaction hash and never its contents: a consensus
+   log is public and permanent, and publishing calldata would broadcast an
+   agent's strategy to everyone reading.
+   ========================================================================== */
+(function () {
+  var el = document.getElementById("ticker");
+  if (!el) return;
+
+  var TOPIC = "0.0.10413192";
+  var URL = "https://testnet.mirrornode.hedera.com/api/v1/topics/" + TOPIC +
+            "/messages?limit=4&order=desc";
+
+  var tone = { low: "v-ok", medium: "v-esc", high: "v-deny", unavailable: "v-una" };
+
+  function group(n) {
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, "\u2009");
+  }
+
+  function row(cls, word, detail) {
+    return '<span class="tick"><b class="' + cls + '">' + word + "</b><span>" +
+           detail + "</span></span>";
+  }
+
+  fetch(URL).then(function (r) { return r.json(); }).then(function (body) {
+    var rows = (body.messages || []).map(function (m) {
+      var entry = JSON.parse(atob(m.message));
+      var source = (entry.sources || [])[0];
+      /* Lag first. On a page arguing that the age of the evidence is the
+         thing nobody reports, the block number is the less interesting half —
+         and the shorter line is what lets four entries fit without the
+         container slicing the last one through the middle of a word. */
+      var detail = (source ? "lag " + source.lag + "s" : "no indexed source") +
+                   " · seq " + m.sequence_number;
+      return row(tone[entry.tier] || "", entry.tier, detail);
+    });
+
+    el.innerHTML = rows.length
+      ? rows.join("")
+      : row("", "·", "the journal is empty on this topic");
+  }).catch(function () {
+    /* Said plainly. A ticker that invented rows when the journal was
+       unreachable would be the one piece of this page not worth reading. */
+    el.innerHTML = row("", "·", "the verdict journal could not be read just now");
+  });
+})();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+# presign
+
+> Pre-signature transaction risk for agent wallets. You send an **unsigned**
+> transaction; you get back a tier, the findings behind it, and — the part no
+> other service returns — how far behind chain head the evidence was.
+
+This file is for you, not for a person. It is the whole integration surface in
+one place, with no markup to step over. Everything below is live behaviour of
+`https://presign.dev`, not a specification of intent.
+
+- Base URL: `https://presign.dev` (also `https://api.presign.dev`)
+- Network for payment: Hedera testnet
+- Source: https://github.com/n0ctr1/presign
+- This file: https://presign.dev/llms.txt
+
+presign is an **advisor, never a co-signer**. It holds no keys, signs no
+transactions for you, and broadcasts nothing. You keep your key and you keep
+the decision; it gives you something to base the decision on.
+
+---
+
+## The one thing to get right
+
+There are four tiers and the fourth is the reason this exists.
+
+| tier | what it means | what you should do |
+|---|---|---|
+| `low` | every rule ran; none found anything | sign without further confirmation |
+| `medium` | a real but standing property — an upgradeable proxy, a bounded approval | escalate to a human before signing |
+| `high` | something specific and wrong about *this* transaction | do not sign; report the finding |
+| `unavailable` | fresh context could not be obtained | **do not sign** |
+
+`unavailable` is not a softer `low`. It means the transaction was not
+evaluated. If you treat it as "nothing found", you have converted a failure to
+obtain data into a green light, which is the exact failure this service is
+built to prevent. Check `verdict.provenance.unavailableRules` — every rule that
+could not run is named there with the reason it could not.
+
+An empty `unavailableRules` array is meaningful: it says every rule ran.
+
+---
+
+## Free endpoints
+
+No key, no account, no payment. Ask these first.
+
+### `GET /health`
+
+What this instance can currently see.
+
+```json
+{
+  "ok": true,
+  "network": "hedera:testnet",
+  "payTo": "0.0.10398276",
+  "rules": ["R1", "R2", "R3", "R4"],
+  "upstream_spend": { "funding": "studio-key", "known": false },
+  "sources": [
+    { "name": "proxy-upgrade-stream", "live": true,
+      "blocks": 1290, "proxies": 360, "firstBlock": 25935134 }
+  ]
+}
+```
+
+Read `sources[].live` before trusting an absence. When the proxy upgrade stream
+is not live, rule R2 reports upgrade history as unavailable rather than clean —
+a stopped stream's silence is not evidence that nothing happened.
+
+### `GET /quote`
+
+What a verdict costs and what it buys, before you commit to buying one.
+
+```json
+{
+  "network": "hedera:testnet",
+  "pay_to": "0.0.10398276",
+  "routes": {
+    "/verdict/local": { "rules": ["R1","R2"], "hbar": "0.001",
+                        "buys": "simulation, approval and proxy-mutability checks" },
+    "/verdict/full":  { "rules": ["R1","R2","R3","R4"], "hbar": "0.005",
+                        "buys": "the above, plus protocol invariants from freshness-gated
+                                 indexed data and identification of the counterparty" }
+  }
+}
+```
+
+`/verdict/full` is registered only when this instance can actually run R3 and
+R4. If it is absent from `routes`, the instance has no indexed-data source and
+says so in a `note` field rather than selling you the cheap verdict at the
+dearer price.
+
+---
+
+## Paid endpoints
+
+`POST /verdict/local` — 0.001 HBAR — R1 and R2. Needs only an RPC.
+`POST /verdict/full` — 0.005 HBAR — adds R3 and R4, which buy indexed data.
+
+Request body:
+
+```json
+{
+  "transaction": {
+    "from":    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to":      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    "value":   "0",
+    "data":    "0x095ea7b3...",
+    "chainId": 1
+  }
+}
+```
+
+`to` may be `null` for contract creation. `value` is a decimal string.
+Supported `chainId`: 1, 10, 137, 8453, 42161. An unsupported chain returns
+`unavailable` rather than a guess.
+
+### The payment exchange
+
+Unpaid, you get `402` with two things: a readable JSON body, and a
+machine-readable manifest in the `payment-required` header (base64 JSON).
+
+```
+HTTP/2 402
+payment-required: eyJ4NDAyVmVyc2lvbiI6Mi...
+```
+
+Decoded, the manifest is:
+
+```json
+{
+  "x402Version": 2,
+  "resource": { "url": "http://presign.dev/verdict/full" },
+  "accepts": [
+    { "scheme": "exact", "network": "hedera:testnet",
+      "amount": "500000", "asset": "0.0.0",
+      "payTo": "0.0.10398276", "maxTimeoutSeconds": 300 }
+  ]
+}
+```
+
+`amount` is in tinybars: 500000 = 0.005 HBAR. `asset` `0.0.0` is native HBAR.
+
+Sign an x402 payment and retry the same request with a `payment-signature`
+header. Any x402 client does this for you:
+
+```js
+import { x402Client } from "@x402/core/client";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import { createClientHederaSigner } from "@x402/hedera";
+import { ExactHederaScheme } from "@x402/hedera/exact/client";
+
+const client = new x402Client()
+  // Set a ceiling rather than switching spend controls off. An agent that
+  // hands over value because something asked it to is the failure this
+  // service exists to warn you about.
+  .setSpendControls({
+    allowedAssets: [{ network: "hedera:testnet", asset: "0.0.0",
+                      maxAmountPerPayment: "10000000" }]
+  })
+  .register("hedera:*", new ExactHederaScheme(signer));
+
+const res = await wrapFetchWithPayment(fetch, client)(
+  "https://presign.dev/verdict/full",
+  { method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ transaction }) }
+);
+```
+
+### If the verdict cannot be produced
+
+`503` with `error: "verdict_unavailable"`, and **no payment is taken** — the
+settlement is overridden to zero. You are not charged for an answer you did not
+get. Retrying later is reasonable; the request was well-formed.
+
+A `400` means the request was malformed and is your problem to fix.
+
+---
+
+## What comes back
+
+```json
+{
+  "decision": "escalation_required",
+  "verdict": {
+    "tier": "medium",
+    "action": "Escalate to on-device human confirmation before signing.",
+    "findings": [
+      { "rule": "R1", "severity": "critical",
+        "title": "Unlimited approval to an address linked to a known incident",
+        "detail": "...",
+        "evidence": { "derived_from": "state_diff", "slot": "0x...", "spender": "0x..." } }
+    ],
+    "provenance": {
+      "simulatedAtBlock": 25932605,
+      "chainId": 1,
+      "sources": [
+        { "deploymentId": "QmcXE5QVcBcv...", "displayName": "Aave V3 Ethereum",
+          "effectiveLagSeconds": 13.3, "measuredAt": "2026-09-09T..." }
+      ],
+      "unavailableRules": []
+    },
+    "evaluatedAt": "2026-09-09T..."
+  },
+  "cost": {
+    "rules_run": ["R1","R2","R3","R4"],
+    "elapsed_ms": 2751,
+    "charged": "0.005 HBAR",
+    "paid_upstream": { "funding": "studio-key", "known": false }
+  },
+  "journal": { "topic": "0.0.10413192", "sequence": 13,
+               "consensus_timestamp": "...", "tx_hash": "..." }
+}
+```
+
+### Fields worth acting on
+
+- **`verdict.tier`** — the decision. See the table at the top.
+- **`verdict.action`** — the same thing as a sentence, so you do not have to
+  invent your own mapping from tier to behaviour.
+- **`provenance.sources[].effectiveLagSeconds`** — how stale the indexed
+  evidence was, in seconds, at the moment it was used. This is measured lag
+  plus the age of the measurement, so a warm cache cannot make old data look
+  current. A `low` verdict resting on a source 400 seconds behind head is a
+  different claim from one resting on a source 4 seconds behind.
+- **`provenance.unavailableRules[]`** — `{ ruleId, reason, detail }`. Empty
+  means everything ran.
+- **`provenance.simulatedAtBlock`** — the block the transaction was actually
+  executed against.
+- **`findings[].evidence`** — machine-checkable support: storage slots,
+  addresses, deployment ids. The point of paying is the evidence; a tier alone
+  is a number you would have to trust.
+- **`findings[].standing`** — `true` when the finding describes the
+  counterparty in general rather than this transaction. "This contract is
+  upgradeable" is true of every call to it and cannot by itself be the reason
+  to refuse this one.
+- **`journal`** — the verdict is written to Hedera Consensus Service. It
+  records the transaction hash, never its contents: a consensus log is public
+  and permanent, and publishing calldata would broadcast your strategy.
+
+---
+
+## What the rules look for
+
+- **R1 — unlimited approval.** Reads the allowance from the simulated state
+  diff, not from the calldata. A router, a multicall or a permit shows nothing
+  useful on the surface and an unmistakable allowance write in the diff.
+  Cross-checked against a configurable incident registry.
+- **R2 — mutable logic.** Reads proxy storage slots directly, because
+  `implementation()` and `admin()` usually revert for anyone but the admin.
+  Distinguishes a standing property from an implementation swap inside the
+  transaction being judged; only the second reaches `high`.
+- **R3 — protocol invariant breach.** Checks the counterparty protocol's own
+  accounting against deployments that index *that contract* and sit inside a
+  freshness budget. Only impossible states count — borrows exceeding deposits,
+  negative balances — never thresholds, because a market at 99.9% utilisation
+  is legitimate.
+- **R4 — unidentified counterparty.** No deployment in the registry indexes
+  this address, and code first appeared at it N days ago. Reads EIP-7702
+  delegations and judges the delegate rather than the account.
+
+---
+
+## The data layer on its own
+
+If you want freshness-gated source selection without our rules, simulation or
+opinions about risk, it ships as a separate MCP server:
+
+```
+claude mcp add presign -- npx -y @presign/mcp-server
+```
+
+Seven tools. The ones nothing else answers:
+
+- `resolve_rule_capability` — which deployments can serve a rule right now,
+  within a lag budget you choose. An unsatisfied result means unavailable, never
+  safe.
+- `check_deployment_freshness` — lag from chain head, where chain head comes
+  from an independent RPC. If both came from the indexer, a stalled indexer
+  would be indistinguishable from a healthy one.
+- `check_proxy_upgrade_history` — when a proxy's implementation last changed.
+  No subgraph carries this: an upgrade is an event, and current state says what
+  the implementation is now, never when it became that.
+
+Instructions for using them are at
+https://github.com/n0ctr1/presign/blob/main/packages/mcp-server/SKILL.md
+
+---
+
+## Honest limits
+
+- **Testnet.** Payment settles on Hedera testnet. Do not point production keys
+  at this endpoint.
+- **This is not the pre-signature moment nobody has reached.** Hexagate,
+  Blockaid and GoPlus all act before the signature. What none of them return is
+  the age of the evidence behind the answer.
+- **Coverage runs out.** 33 conforming deployments across three schema families
+  and five networks. `yield-vault` is thin: two deployments on Ethereum, one on
+  Arbitrum, none elsewhere. Where R3 has nothing to read, it says so.
+- **One counterparty is slow enough to be refused.** The Uniswap V3 mainnet
+  subgraph answers in 5–6 seconds while four seconds behind head. It is current
+  and slower than the service is willing to wait, so calls that depend on it
+  come back `unavailable`. That is a latency choice, not a data problem, and it
+  is stated here rather than hidden.
+- **The incident registry is a configurable input**, not a maintained feed.
+  R1 supports it; supplying addresses is yours to do.

@@ -819,9 +819,9 @@ budget  1s  →  <span class="y">unavailable</span>
       <p class="tag">LIVE FROM THE RUNNING SERVICE</p>
     </div>
     <div class="nums">
+      <div class="num"><p class="big pending" id="n-journal">—</p><p class="lb">verdicts written to Hedera, all time</p></div>
       <div class="num"><p class="big pending" id="n-rules">—</p><p class="lb">rules this instance runs</p></div>
-      <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks watched for proxy upgrades</p></div>
-      <div class="num"><p class="big pending" id="n-proxies">—</p><p class="lb">proxies seen upgrading</p></div>
+      <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks in the current watch window</p></div>
       <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict</p></div>
     </div>
     <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
@@ -974,9 +974,9 @@ tabs.forEach(function (tab) {
 (function () {
   var note = document.getElementById("live-note");
   var fields = {
+    journal: document.getElementById("n-journal"),
     rules:   document.getElementById("n-rules"),
     blocks:  document.getElementById("n-blocks"),
-    proxies: document.getElementById("n-proxies"),
     price:   document.getElementById("n-price")
   };
 
@@ -1010,12 +1010,21 @@ tabs.forEach(function (tab) {
       return s.name === "proxy-upgrade-stream";
     })[0];
 
+    /*
+     * Blocks watched is a figure about *this process*, and it starts again
+     * when the process does. That is deliberate rather than a shortcoming: the
+     * index is bounded by what it has actually seen, which is what lets R2 say
+     * "no upgrade since block N" instead of "never upgraded". An index that
+     * survived a restart without also carrying the gap would describe its
+     * window as continuous while a hole sat in the middle of it.
+     *
+     * So it is labelled as a window, and the window's start is named below.
+     * The number that does accumulate is the journal, and it lives on chain.
+     */
     if (stream) {
       set(fields.blocks, group(stream.blocks || 0));
-      set(fields.proxies, group(stream.proxies || 0));
     } else {
       set(fields.blocks, "none");
-      set(fields.proxies, "none");
     }
 
     var full = (quote.routes || {})["/verdict/full"];
@@ -1037,13 +1046,29 @@ tabs.forEach(function (tab) {
 
     if (stream && stream.live) {
       say("on", "live · " + (health.rules || []).join(", ") +
-                " · watching from block " + group(stream.firstBlock));
+                " · watching from block " + group(stream.firstBlock) +
+                ", which restarts with the process — the journal does not");
     } else if (stream) {
       say("off", "the upgrade stream is not live — R2 reports its history as unavailable, " +
                  "which is the honest answer for an index that has seen nothing yet");
     } else {
       say("off", "no upgrade stream configured on this instance");
     }
+    /*
+     * The one figure here that survives a restart, a redeploy and this machine
+     * entirely. It is the sequence number of the last journal entry, read from
+     * Hedera's public mirror node — the same source the ticker reads, so the
+     * count and the rows beneath it cannot disagree.
+     */
+    fetch("https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10413192" +
+          "/messages?limit=1&order=desc")
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        var last = (body.messages || [])[0];
+        set(fields.journal, last ? group(last.sequence_number) : "0");
+      })
+      .catch(function () { set(fields.journal, "—"); });
+
   }).catch(function () {
     var pulse = document.getElementById("pulse");
     if (pulse) pulse.innerHTML = '<i style="background:var(--rose)"></i>service unreachable';

@@ -7,6 +7,7 @@
 
 export { createApp, FACILITATORS } from "./app.js";
 export type { HealthSource, HederaNetwork, ServiceOptions } from "./app.js";
+export { parseJournalMode, type JournalMode } from "./app.js";
 export {
   parseRules,
   quote,

@@ -104,6 +104,14 @@ export interface JournalReceipt {
 }
 
 export interface VerdictJournal {
+  /**
+   * Where entries go.
+   *
+   * On the interface rather than only on the Hedera implementation, because a
+   * caller told its verdict was queued rather than written needs to know
+   * queued *where* — a promise of a record with no address is not a record.
+   */
+  readonly topicId: string;
   record(
     transaction: UnsignedTransaction,
     verdict: Verdict,
@@ -120,6 +128,8 @@ export interface VerdictJournal {
  */
 export class InMemoryVerdictJournal implements VerdictJournal {
   readonly entries: JournalEntry[] = [];
+  /** Named so a reader of a response can tell this is not a public record. */
+  readonly topicId = "local";
   #sequence = 0;
 
   record(

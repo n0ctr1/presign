@@ -126,6 +126,28 @@ function describeUpstream(ledger: PaymentLedger | undefined, mark: number) {
   };
 }
 
+/** How the caller wants the verdict journalled. */
+export type JournalMode = "sync" | "async";
+
+/**
+ * Read the caller's journalling preference.
+ *
+ * Two chain operations sit in the path of a paid verdict — the payment and the
+ * journal entry — and neither depends on the other, so making the caller wait
+ * for both costs about two seconds that some callers would rather not spend.
+ * Others would rather have the receipt: somebody preparing for a dispute needs
+ * a sequence number they can cite, not a promise that one is coming.
+ *
+ * There is no right answer to pick on their behalf, so it is a parameter.
+ * `sync` stays the default because it is what this service already promised,
+ * and quietly turning an assurance into an intention is not an upgrade.
+ */
+export function parseJournalMode(raw: string | undefined): JournalMode {
+  if (raw === undefined || raw === "") return "sync";
+  if (raw === "sync" || raw === "async") return raw;
+  throw new RangeError(`journal must be "sync" or "async", not ${raw}`);
+}
+
 interface VerdictRequestBody {
   readonly transaction?: {
     from?: string;
@@ -154,6 +176,14 @@ function parseTransaction(body: VerdictRequestBody): UnsignedTransaction {
 }
 
 export function createApp(options: ServiceOptions): Hono {
+  /*
+   * Journal writes that failed after their response had already gone out.
+   * Counted because an asynchronous write has nobody left to tell: the caller
+   * is gone, and without this the record could stop being written while every
+   * response went on looking exactly as healthy as before.
+   */
+  let journalFailures = 0;
+
   const app = new Hono();
 
   const facilitator = new HTTPFacilitatorClient({
@@ -225,6 +255,12 @@ export function createApp(options: ServiceOptions): Hono {
       rules: fullAvailable ? ["R1", "R2", "R3", "R4"] : ["R1", "R2"],
       // What this process has spent upstream since it started, so an operator
       // can see the running cost without buying a verdict to find out.
+      journal: {
+        topic: options.journal.topicId,
+        // Zero is the expected reading. Anything else means entries were lost
+        // after their response had already been sent.
+        failed_async_writes: journalFailures,
+      },
       upstream_spend:
         options.ledger === undefined
           ? { funding: "studio-key", known: false }
@@ -319,8 +355,10 @@ export function createApp(options: ServiceOptions): Hono {
     (pipeline: PresignPipeline, rules: readonly RuleId[]) =>
     async (c: Context) => {
       let transaction: UnsignedTransaction;
+      let journalMode: JournalMode;
       try {
         transaction = parseTransaction((await c.req.json()) as VerdictRequestBody);
+        journalMode = parseJournalMode(c.req.query("journal"));
       } catch (error) {
         return c.json({ error: (error as Error).message }, 400);
       }
@@ -364,9 +402,49 @@ export function createApp(options: ServiceOptions): Hono {
         );
       }
 
-      // Journalled before responding. A verdict the caller acts on but we
-      // never recorded is exactly the one that will be disputed later.
-      const receipt = await options.journal.record(transaction, outcome.verdict);
+      /*
+       * Journalled before responding, unless the caller asked otherwise.
+       *
+       * A verdict the caller acts on but we never recorded is exactly the one
+       * that will be disputed later, which is why waiting is the default. It
+       * is not free: the entry is a Hedera consensus submit, a second or two,
+       * on top of the settlement the payment already needs — two chain round
+       * trips in a row for one answer, neither waiting on the other.
+       *
+       * `?journal=async` starts the write and answers without it. The record
+       * is still made; what changes is that the response cannot cite it, so it
+       * says `queued` rather than a sequence number it does not have.
+       */
+      let journalled: Record<string, unknown>;
+      if (journalMode === "async") {
+        void options.journal
+          .record(transaction, outcome.verdict)
+          .catch((error: unknown) => {
+            journalFailures += 1;
+            console.error(
+              `  journal write failed after responding: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
+        journalled = {
+          mode: "async",
+          topic: options.journal.topicId,
+          status: "queued",
+          note:
+            "the entry is being written and this response cannot cite it. " +
+            "Use ?journal=sync for a sequence number in the response.",
+        };
+      } else {
+        const receipt = await options.journal.record(transaction, outcome.verdict);
+        journalled = {
+          mode: "sync",
+          topic: receipt.topicId,
+          sequence: receipt.sequenceNumber,
+          consensus_timestamp: receipt.consensusTimestamp,
+          tx_hash: receipt.entry.txHash,
+        };
+      }
 
       return c.json({
         decision: outcome.decision,
@@ -400,12 +478,7 @@ export function createApp(options: ServiceOptions): Hono {
            */
           paid_upstream: describeUpstream(options.ledger, spentBefore),
         },
-        journal: {
-          topic: receipt.topicId,
-          sequence: receipt.sequenceNumber,
-          consensus_timestamp: receipt.consensusTimestamp,
-          tx_hash: receipt.entry.txHash,
-        },
+        journal: journalled,
       });
     };
 

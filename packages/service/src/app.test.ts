@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createApp } from "../dist/index.js";
+import { createApp, parseJournalMode } from "../dist/index.js";
 import type { PresignPipeline } from "@presign/gateway";
 import { InMemoryVerdictJournal } from "@presign/hedera";
 
@@ -115,3 +115,33 @@ test("health states which rules this instance actually runs", async () => {
  * fail for reasons unrelated to the behaviour it claims to cover. Verified
  * against the running service instead.
  */
+
+test("the journal mode defaults to sync and refuses anything else", () => {
+  /*
+   * Two chain round trips sit in the path of a paid verdict — the payment and
+   * the journal entry — and neither waits on the other. A caller may skip the
+   * second; the default does not, because that is what this service already
+   * promised and quietly turning an assurance into an intention is not an
+   * upgrade.
+   */
+  assert.equal(parseJournalMode(undefined), "sync");
+  assert.equal(parseJournalMode(""), "sync");
+  assert.equal(parseJournalMode("sync"), "sync");
+  assert.equal(parseJournalMode("async"), "async");
+
+  // Falling back silently would charge a caller who asked for speed the two
+  // seconds they were trying to avoid, and never tell them why.
+  assert.throws(() => parseJournalMode("maybe"), /sync.*async/);
+  assert.throws(() => parseJournalMode("SYNC"), /sync.*async/);
+});
+
+test("/health names the journal topic and counts writes lost after responding", async () => {
+  const health = (await (await appWith(pipeline("low")).request("/health")).json()) as {
+    journal: { topic: string; failed_async_writes: number };
+  };
+
+  // An asynchronous write has nobody left to tell — the caller is gone — so
+  // this count is the only place the loss becomes visible.
+  assert.equal(health.journal.failed_async_writes, 0);
+  assert.ok(typeof health.journal.topic === "string");
+});

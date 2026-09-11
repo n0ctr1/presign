@@ -36,14 +36,17 @@ import { parseRules, quote, formatHbar, BASE_TINYBARS, INDEXED_DATA_TINYBARS, ty
 export type HederaNetwork = "hedera:testnet" | "hedera:mainnet";
 
 /**
- * Facilitators split by network, which is not obvious and bites late.
+ * Blocky402 settles both Hedera networks, from separate hosts.
  *
- * `x402.org` settles `hedera:testnet` only; Blocky402 settles `hedera:mainnet`
- * only. Pointing the wrong one at a network produces a startup sync failure
- * rather than a clear message, so the mapping is explicit here.
+ * The split is easy to misread. `api.blocky402.com/supported` lists
+ * `hedera:mainnet` alone, which looks like "Blocky402 is mainnet-only" — and
+ * this service settled testnet through x402.org for a while on exactly that
+ * reading. Testnet has its own host, open access and its own fee payer.
+ * Pointing a network at a host that does not list it fails at startup sync
+ * rather than with a clear message, so the mapping is explicit here.
  */
 export const FACILITATORS: Readonly<Record<HederaNetwork, string>> = {
-  "hedera:testnet": "https://x402.org/facilitator",
+  "hedera:testnet": "https://api.testnet.blocky402.com",
   "hedera:mainnet": "https://api.blocky402.com",
 };
 

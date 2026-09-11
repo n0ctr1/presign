@@ -46,7 +46,7 @@ import { buildRegistryClient } from "./registry.js";
 
 import { ProxyUpgradeIndex } from "@presign/substreams";
 
-import { createApp, type HederaNetwork } from "./app.js";
+import { createApp, FACILITATORS, type HederaNetwork } from "./app.js";
 import { readTopicId, writeTopicId } from "./state.js";
 
 /**
@@ -301,6 +301,9 @@ async function main(): Promise<void> {
       info.address === "::" || info.address === "0.0.0.0"
         ? "all interfaces"
         : info.address;
+  // Blocky402 by default for both networks; overridable for a self-hosted one.
+  const facilitatorOverride = process.env["FACILITATOR_URL"];
+
     console.log(`\npresign service listening on port ${info.port} (${reachable})`);
     console.log(`  network:     ${network}`);
     console.log(`  pay to:      ${operatorId}`);
@@ -322,3 +325,4 @@ async function main(): Promise<void> {
 }
 
 await main();
+    console.log(`  settles via: ${facilitatorOverride ?? FACILITATORS[network]}`);

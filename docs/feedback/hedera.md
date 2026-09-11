@@ -38,6 +38,20 @@ docs. One sentence — "Blocky402 settles mainnet; use x402.org for testnet
 development" — removes the surprise entirely. Better still would be Blocky402
 supporting testnet so the same code path is exercised throughout.
 
+**Correction, 2026-09-11 — the finding above is wrong.** Blocky402 does settle
+testnet, from a separate host with open access:
+
+```
+GET https://api.testnet.blocky402.com/supported
+  → {"scheme":"exact","network":"hedera:testnet","extra":{"feePayer":"0.0.7162784"}}
+```
+
+The Quickstart on blocky402.com names that host. We drew "mainnet-only" from
+the main host's `/supported` response instead of reading the Quickstart, which
+is ours to own. The service now settles testnet through Blocky402. What remains
+of the suggestion is narrow: the main host's `/supported` is where a developer
+checking coverage looks first, and it could point at the testnet host.
+
 ---
 
 ## 2026-09-07 — spend controls reject HBAR by default, which is right and surprising
@@ -150,6 +164,6 @@ documented.
 
 ## Not yet done
 
-A mainnet payment through Blocky402. Everything above is testnet, settled
-through x402.org. The service takes the network as configuration and has a
-mainnet route, so this is a funding decision rather than an engineering one.
+A mainnet payment. Testnet settles through Blocky402's hosted testnet
+facilitator; mainnet is the same code path against `api.blocky402.com`, so it
+is a funding decision rather than an engineering one.

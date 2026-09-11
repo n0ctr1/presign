@@ -18,7 +18,7 @@
  */
 
 import { serve } from "@hono/node-server";
-import { HcsVerdictJournal } from "@presign/hedera";
+import { HcsVerdictJournal, resolveOperatorKey } from "@presign/hedera";
 import { PresignPipeline } from "@presign/gateway";
 import type { PaymentLedger } from "@presign/operational-layer";
 import { createApp, readTopicId, writeTopicId } from "@presign/service";
@@ -28,12 +28,17 @@ import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
 import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/client";
 
-/** Hedera portals hand out ECDSA keys as 0x-prefixed hex; the SDK wants them bare. */
-function parseKey(raw: string): PrivateKey {
-  const hex = raw.startsWith("0x") ? raw.slice(2) : raw;
-  return /^[0-9a-fA-F]{64}$/.test(hex)
-    ? PrivateKey.fromStringECDSA(hex)
-    : PrivateKey.fromStringDer(raw);
+/**
+ * The agent's key as its account holds it, in the x402 SDK's key type.
+ *
+ * Raw hex does not say whether it is ECDSA or ED25519, and guessing ECDSA
+ * turns an ED25519 key into a different valid key. The journal's resolver
+ * asks the mirror node; DER then carries the key across, because the two
+ * Hedera SDKs declare nominally distinct key classes.
+ */
+async function agentKeyFor(raw: string, accountId: string, network: "testnet" | "mainnet"): Promise<PrivateKey> {
+  const resolved = await resolveOperatorKey(raw, accountId, network);
+  return PrivateKey.fromStringDer(resolved.toStringDer());
 }
 
 export interface TwoSidedOptions {
@@ -139,7 +144,7 @@ export async function runTwoSided(options: TwoSidedOptions): Promise<void> {
     console.log(`  the agent asks the price first, unpaid: ${price} HBAR for /verdict/full`);
     console.log(`    buys: ${quote.routes["/verdict/full"]?.buys ?? "?"}`);
 
-    const signer = createClientHederaSigner(agentId, parseKey(agentKey), { network });
+    const signer = createClientHederaSigner(agentId, await agentKeyFor(agentKey, agentId, short), { network });
 
     /*
      * Spend controls set rather than switched off. The client refuses unknown

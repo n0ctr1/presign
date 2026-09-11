@@ -19,7 +19,7 @@ import {
   PaymentLedger,
   SubgraphRegistrySource,
 } from "@presign/operational-layer";
-import { RegistrySubprocess } from "./registry-client.js";
+import { buildRegistry } from "./registry-client.js";
 import {
   EnvSecretSource,
   FileSecretSource,
@@ -120,7 +120,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
   const rpc = await resolveEthereumRpc();
   console.log(`Fork upstream: ${describeRpc(rpc)}`);
 
-  const registry = new RegistrySubprocess();
+  const registry = buildRegistry();
   const discovery = new SubgraphRegistrySource(registry);
   const conformance = new ConformanceProbe({ gateway });
   const liveness = new LivenessProbe({

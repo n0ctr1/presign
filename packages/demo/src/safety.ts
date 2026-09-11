@@ -27,9 +27,21 @@ import { buildWiring } from "./wiring.js";
 interface Subject {
   readonly name: string;
   readonly address: string;
+  /**
+   * A read the contract answers without reverting.
+   *
+   * The fixture used to send empty calldata, which most of these contracts
+   * revert on. A revert was then an `info` note; it is now `unavailable`,
+   * because a transaction that fails in simulation was not evaluated. Each
+   * call is a view function, checked against mainnet, so the verdict is about
+   * the contract rather than about calldata it does not accept.
+   */
+  readonly data: string;
   /** Why this one is beyond dispute, so the list cannot drift into guesses. */
   readonly why: string;
 }
+
+const TOTAL_SUPPLY = "0x18160ddd";
 
 /**
  * Contracts chosen for being uncontroversial rather than convenient.
@@ -40,24 +52,31 @@ interface Subject {
  * The second kind is where a rule that treats absence as risk will show it.
  */
 const SUBJECTS: readonly Subject[] = [
-  { name: "WETH9", address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", why: "immutable since 2017, the most-held contract on Ethereum" },
-  { name: "USDC", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", why: "Circle's token, upgradeable by design" },
-  { name: "USDT", address: "0xdac17f958d2ee523a2206206994597c13d831ec7", why: "Tether's token" },
-  { name: "DAI", address: "0x6b175474e89094c44da98b954eedeac495271d0f", why: "MakerDAO's stablecoin, immutable" },
-  { name: "Aave V3 Pool", address: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2", why: "largest lending market" },
-  { name: "Uniswap V3 Router 2", address: "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", why: "the router most swaps go through" },
-  { name: "Uniswap V3 Factory", address: "0x1f98431c8ad98523631ae4a59f267346ea31f984", why: "immutable factory" },
-  { name: "Lido stETH", address: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", why: "largest liquid staking token" },
-  { name: "Curve 3pool", address: "0xbebc44782c7db0a1a60cb6fe97d0b483032ff1c7", why: "immutable, long-standing stable pool" },
-  { name: "Multicall3", address: "0xca11bde05977b3631167028862be2a173976ca11", why: "immutable utility deployed on every chain; nobody indexes it" },
-  { name: "Permit2", address: "0x000000000022d473030f116ddee9f6b43ac78ba3", why: "Uniswap's immutable approval contract" },
-  { name: "ENS Registry", address: "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e", why: "immutable ENS root" },
+  { name: "WETH9", address: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", data: TOTAL_SUPPLY, why: "immutable since 2017, the most-held contract on Ethereum" },
+  { name: "USDC", address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", data: TOTAL_SUPPLY, why: "Circle's token, upgradeable by design" },
+  { name: "USDT", address: "0xdac17f958d2ee523a2206206994597c13d831ec7", data: TOTAL_SUPPLY, why: "Tether's token" },
+  { name: "DAI", address: "0x6b175474e89094c44da98b954eedeac495271d0f", data: TOTAL_SUPPLY, why: "MakerDAO's stablecoin, immutable" },
+  // getReservesList()
+  { name: "Aave V3 Pool", address: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2", data: "0xd1946dbc", why: "largest lending market" },
+  // WETH9()
+  { name: "Uniswap V3 Router 2", address: "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", data: "0x4aa4a4fc", why: "the router most swaps go through" },
+  // owner()
+  { name: "Uniswap V3 Factory", address: "0x1f98431c8ad98523631ae4a59f267346ea31f984", data: "0x8da5cb5b", why: "immutable factory" },
+  { name: "Lido stETH", address: "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", data: TOTAL_SUPPLY, why: "largest liquid staking token" },
+  // get_virtual_price()
+  { name: "Curve 3pool", address: "0xbebc44782c7db0a1a60cb6fe97d0b483032ff1c7", data: "0xbb7b8b80", why: "immutable, long-standing stable pool" },
+  // getBlockNumber()
+  { name: "Multicall3", address: "0xca11bde05977b3631167028862be2a173976ca11", data: "0x42cbb15c", why: "immutable utility deployed on every chain; nobody indexes it" },
+  // DOMAIN_SEPARATOR()
+  { name: "Permit2", address: "0x000000000022d473030f116ddee9f6b43ac78ba3", data: "0x3644e515", why: "Uniswap's immutable approval contract" },
+  // owner(bytes32(0))
+  { name: "ENS Registry", address: "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e", data: `0x02571be3${"0".repeat(64)}`, why: "immutable ENS root" },
 ];
 
 const AGENT = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
 
-const call = (to: string): UnsignedTransaction =>
-  ({ from: AGENT, to, value: 0n, data: "0x", chainId: 1 }) as UnsignedTransaction;
+const call = (subject: Subject): UnsignedTransaction =>
+  ({ from: AGENT, to: subject.address, value: 0n, data: subject.data, chainId: 1 }) as UnsignedTransaction;
 
 function describe(verdict: Verdict): string {
   const rules = verdict.findings
@@ -94,7 +113,7 @@ async function main(): Promise<void> {
 
   try {
     for (const subject of SUBJECTS) {
-      const { verdict } = await pipeline.run(call(subject.address));
+      const { verdict } = await pipeline.run(call(subject));
       tiers.set(verdict.tier, (tiers.get(verdict.tier) ?? 0) + 1);
       console.log(
         `${subject.name.padEnd(24)} ${verdict.tier.padEnd(12)} ${describe(verdict)}`,
@@ -127,7 +146,10 @@ async function main(): Promise<void> {
     exit(1);
   }
 
-  console.log("\nNone reached high. Medium on an upgradeable proxy is correct, not a false positive.");
+  console.log(
+    "\nNone reached high. A medium here would need a reason — an upgradeable proxy the call adds " +
+      "exposure to — and a view call adds none.",
+  );
   exit(0);
 }
 

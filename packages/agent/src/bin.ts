@@ -63,7 +63,9 @@ async function main(): Promise<void> {
           from: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
           to: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
           value: "0",
-          data: "0x",
+          // getReservesList(): empty calldata reverts on the pool, and a
+          // revert is `unavailable`, not a verdict about Aave.
+          data: "0xd1946dbc",
           chainId: 1,
         }
       : {

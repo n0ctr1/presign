@@ -32,8 +32,17 @@ const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const AAVE_V3_POOL = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2";
 const UNISWAP_V3_FACTORY = "0x1f98431c8ad98523631ae4a59f267346ea31f984";
 
-const call = (to: string): UnsignedTransaction =>
-  ({ from: AGENT, to, value: 0n, data: "0x", chainId: 1 }) as UnsignedTransaction;
+/**
+ * A view call each counterparty answers without reverting. Empty calldata
+ * reverts on most contracts, and a revert is now `unavailable` — timing a
+ * refusal would measure the wrong path.
+ */
+const call = (to: string, data = "0x"): UnsignedTransaction =>
+  ({ from: AGENT, to, value: 0n, data, chainId: 1 }) as UnsignedTransaction;
+
+const GET_RESERVES_LIST = "0xd1946dbc";
+const TOTAL_SUPPLY = "0x18160ddd";
+const OWNER = "0x8da5cb5b";
 
 /** Median rather than mean: one slow gateway call should not move the figure. */
 function median(values: readonly number[]): number {
@@ -62,11 +71,11 @@ async function main(): Promise<void> {
     const fresh = await wiring.findRecentDeployment();
 
     const cases: { name: string; transaction: UnsignedTransaction; note: string }[] = [
-      { name: "Aave V3 Pool", transaction: call(AAVE_V3_POOL), note: "R3 discovers, probes and queries" },
-      { name: "USDC", transaction: call(USDC), note: "R1, R2 and a counterparty R3 cannot speak for" },
+      { name: "Aave V3 Pool", transaction: call(AAVE_V3_POOL, GET_RESERVES_LIST), note: "R3 discovers, probes and queries" },
+      { name: "USDC", transaction: call(USDC, TOTAL_SUPPLY), note: "R1, R2 and a counterparty R3 cannot speak for" },
       {
         name: "Uniswap V3 Factory",
-        transaction: call(UNISWAP_V3_FACTORY),
+        transaction: call(UNISWAP_V3_FACTORY, OWNER),
         // Kept in deliberately. This is the slowest counterparty measured, and
         // hiding it would leave a latency claim resting on the easy cases.
         note: "the slow end: a DEX subgraph answering in seconds, not milliseconds",

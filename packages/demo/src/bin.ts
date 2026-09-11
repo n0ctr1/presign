@@ -43,13 +43,21 @@ const approve = (spender: string, amountHex: string): UnsignedTransaction => ({
   chainId: 1,
 });
 
-const call = (to: string): UnsignedTransaction => ({
+/**
+ * A call with calldata the counterparty accepts. Empty calldata reverts on the
+ * Aave pool, and a revert is `unavailable` — not evaluated — so the healthy
+ * protocol scenario reads the reserve list, a view any caller may send.
+ */
+const call = (to: string, data = "0x"): UnsignedTransaction => ({
   from: AGENT as never,
   to: to as never,
   value: 0n,
-  data: "0x" as never,
+  data: data as never,
   chainId: 1,
 });
+
+/** `getReservesList()` on the Aave V3 pool. */
+const GET_RESERVES_LIST = "0xd1946dbc";
 
 /**
  * Print the heading, then run, then print the outcome.
@@ -168,13 +176,13 @@ async function main(): Promise<void> {
     await scenario(
       "3. Call to Aave V3 Pool \u2014 healthy protocol, fresh indexed data",
       "   Expect: low, with the deployment and its lag named.",
-      () => pipeline.run(call(AAVE_V3_POOL)),
+      () => pipeline.run(call(AAVE_V3_POOL, GET_RESERVES_LIST)),
     );
 
     await scenario(
       "4. The same Aave call under a 1-second freshness budget",
       "   Expect: unavailable. Same protocol, same data, only the budget changed.",
-      () => strict.run(call(AAVE_V3_POOL)),
+      () => strict.run(call(AAVE_V3_POOL, GET_RESERVES_LIST)),
     );
 
     /*
@@ -230,7 +238,7 @@ async function main(): Promise<void> {
           from: AGENT,
           to: AAVE_V3_POOL,
           value: "0",
-          data: "0x",
+          data: GET_RESERVES_LIST,
           chainId: 1,
         },
       });

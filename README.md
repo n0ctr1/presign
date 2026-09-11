@@ -109,7 +109,7 @@ calldata.
 
 | Rule | What it catches |
 |---|---|
-| **R1** Unlimited approval | `approve` for `type(uint256).max` to a spender outside the allowlist, cross-checked against an incident registry |
+| **R1** Unlimited approval | An unlimited allowance written in the state diff to a spender outside the allowlist; an allowance of *any* amount to an address on [ScamSniffer's open blacklist](https://github.com/scamsniffer/scam-database), fetched at startup and every six hours, is critical |
 | **R2** Mutable logic | Contract behind a proxy with a live admin or no timelock |
 | **R3** Invariant breach | Shares not reconciling with assets; TVL diverging from issued shares |
 | **R4** Unidentified counterparty | No deployment in the registry indexes the contract, and code first appeared at the address N days ago |
@@ -152,7 +152,11 @@ This section tracks what is actually running, not what is planned.
 | R4 unidentified counterparty + EIP-7702 delegation | done — verified against live mainnet |
 | Proxy upgrade history over MCP | done — verified against a live stream |
 | Ledger DMK escalation, Key Ring source | done — both verified on a Nano X |
-| x402 inbound (Hedera) + HCS journal | done — real paid request on testnet |
+| x402 inbound (Hedera) + HCS journal | done — real paid request on testnet, settled through Blocky402 |
+| Chain guard | done — a transaction for a chain the fork does not hold is refused before payment |
+| Incident registry for R1 | done — ScamSniffer's open blacklist, loaded live and shown on `/health` |
+| R3 pool resolution through the factory | done — Uniswap V3 pools and V2 pairs verified against live mainnet |
+| Key broker on `wallet-cli ring` | done — verified on a Nano X: the verdict MCP paid for a real verdict with a key decrypted from the Key Ring, with no key in any file or environment variable |
 | x402 outbound (The Graph on Base) | done — real paid queries settled on Base, verified on-chain |
 
 ### Measured
@@ -167,13 +171,14 @@ so `npm run latency` times whole verdicts instead:
 | Aave V3 Pool | 701 ms | 79 ms | R3 discovers, probes and queries |
 | USDC | 394 ms | 8 ms | R1, R2, and a counterparty R3 cannot speak for |
 | freshly deployed contract | 952 ms | 5 ms | R4 bisects historical `eth_getCode` |
-| Uniswap V3 Factory | 3356 ms | 3004 ms | the slow end — see below |
+| Uniswap V3 USDC/WETH pool | 1196 ms | 99 ms | R3 resolves the pool through its factory and reads it by id |
+| Uniswap V3 Factory | 3006 ms | 3008 ms | the slow end — see below |
 
 Cold is the first verdict for that counterparty; warm is the repeats after it.
 The one-second budget holds everywhere except the last row, and that row is
-kept in deliberately. The Uniswap V3 mainnet subgraph answers R3's data query
-in 5.2–6.3 seconds while sitting four seconds behind chain head: current, and
-slower than we are willing to wait, so the verdict is `unavailable`. Raising
+kept in deliberately. R3's query for the factory asks for the largest pools by
+value locked, and the Uniswap V3 subgraph does not answer that inside the
+three-second gateway timeout, so the verdict is `unavailable`. Raising
 the limit to accommodate it cost a cold USDC verdict 306 ms → 7.7 s, because a
 slow deployment indexing USDC then spends most of the budget before R3 gives
 up on it. The short limit wins and the trade-off is a caller-settable
@@ -218,6 +223,18 @@ inside a family that is already read; it is covered the moment somebody
 indexes it with the standard schema. What costs a line is a new family, and
 the three rows above are what those three lines bought.
 
+Pools needed one more step. DEX subgraphs index pools through templates, so a
+manifest names the factory and never the pool, and asking the registry which
+deployments index a pool's address finds almost nothing. For the Uniswap V3
+USDC/WETH pool it found two deployments that do not speak the schema and one
+whose only indexer was down, and R3 answered `unavailable` — correctly, since a
+conforming deployment might have been behind the failure, and one was. R3 now
+asks the pool for its `factory()`, has the factory confirm the pool through
+`getPool` or `getPair` at the pool's own tokens, and reads that one pool by id
+from the deployments indexing the factory. The confirmation is what keeps an
+impostor from borrowing Uniswap's standing by returning its factory address.
+The same code serves Uniswap V2 pairs.
+
 ### What `npm run demo` prints
 
 Five scenarios against a live mainnet fork. The middle pair is the one from
@@ -225,8 +242,8 @@ the top of this README, shown here in context:
 
 | Scenario | Verdict |
 |---|---|
-| Unlimited USDC approval to a registry-flagged spender | `high` — do not sign |
-| Bounded approval to the same upgradeable token | `medium` — confirm on device |
+| Unlimited USDC approval to an address on ScamSniffer's blacklist | `high` — do not sign |
+| Bounded approval to Permit2 on the same upgradeable token | `medium` — confirm on device |
 | Call to Aave V3 Pool, healthy, fresh data | `low` — source named, 12.3 s lag |
 | Same call, 1-second freshness budget | `unavailable` — do not sign |
 | Contract deployed minutes ago, indexed by nobody | `high` — do not sign |
@@ -256,6 +273,12 @@ with nothing mocked:
         0.01 USDC  QmcXE5QVcBcv…  0xf1928bbe4cf4d666a31c4e9f6a2bf3704c77ec9bd717b43a7fe3e79dd99f2e5d
         1 queries, 0.01 USDC in total
 ```
+
+That run settled through x402.org's facilitator, which is the `0.0.9185802`
+fee payer above. The service has since moved to Blocky402's testnet
+facilitator; a settlement from it, checkable on the mirror node, is
+`0.0.7162784@1789089549.242890259` — 0.001 HBAR from the agent to the service,
+the network fee paid by Blocky402's account.
 
 Split across two terminals those are two anecdotes. Printed together against
 one transaction they are a margin, and both settlements are public: the HBAR

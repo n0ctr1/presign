@@ -9,7 +9,9 @@ one place, with no markup to step over. Everything below is live behaviour of
 `https://presign.dev`, not a specification of intent.
 
 - Base URL: `https://presign.dev` (also `https://api.presign.dev`)
-- Network for payment: Hedera testnet
+- Network for payment: Hedera testnet, settled through the Blocky402
+  facilitator (`https://api.testnet.blocky402.com`)
+- Chain simulated: Ethereum mainnet (`chainId` 1) only
 - Source: https://github.com/n0ctr1/presign
 - This file: https://presign.dev/llms.txt
 
@@ -111,8 +113,13 @@ Request body:
 ```
 
 `to` may be `null` for contract creation. `value` is a decimal string.
-Supported `chainId`: 1, 10, 137, 8453, 42161. An unsupported chain returns
-`unavailable` rather than a guess.
+
+Supported `chainId`: **1 only**. The simulation runs on an Ethereum mainnet
+fork, and a transaction for any other chain would execute against the wrong
+chain's state. It is refused with `400 unsupported_chain` *before* the payment
+exchange, so you are never asked to pay for it. `GET /health` and `GET /quote`
+list the served chains in `chain_ids`. Do not read a refusal as clearance: you
+still have no verdict for that transaction.
 
 ### The payment exchange
 
@@ -173,7 +180,8 @@ const res = await wrapFetchWithPayment(fetch, client)(
 settlement is overridden to zero. You are not charged for an answer you did not
 get. Retrying later is reasonable; the request was well-formed.
 
-A `400` means the request was malformed and is your problem to fix.
+A `400` means the request was malformed or names a chain this instance does
+not simulate. Both are checked before payment is requested.
 
 ---
 
@@ -245,7 +253,11 @@ A `400` means the request was malformed and is your problem to fix.
 - **R1 — unlimited approval.** Reads the allowance from the simulated state
   diff, not from the calldata. A router, a multicall or a permit shows nothing
   useful on the surface and an unmistakable allowance write in the diff.
-  Cross-checked against a configurable incident registry.
+  Cross-checked against ScamSniffer's open address blacklist, fetched at
+  startup and every six hours: an approval of *any* amount to a listed spender
+  is `critical`, and the finding names the list, its size and when it was
+  fetched. The list is published with a seven-day delay, and an address absent
+  from it is not evidence of safety.
 - **R2 — mutable logic.** Reads proxy storage slots directly, because
   `implementation()` and `admin()` usually revert for anyone but the admin.
   Distinguishes a standing property from an implementation swap inside the
@@ -254,7 +266,9 @@ A `400` means the request was malformed and is your problem to fix.
   accounting against deployments that index *that contract* and sit inside a
   freshness budget. Only impossible states count — borrows exceeding deposits,
   negative balances — never thresholds, because a market at 99.9% utilisation
-  is legitimate.
+  is legitimate. A DEX pool is resolved to its factory, the factory must
+  confirm the pool at the pool's own tokens, and that one pool is read by id —
+  subgraphs index pools through the factory, not by the pool's address.
 - **R4 — unidentified counterparty.** No deployment in the registry indexes
   this address, and code first appeared at it N days ago. Reads EIP-7702
   delegations and judges the delegate rather than the account.
@@ -328,10 +342,11 @@ https://github.com/n0ctr1/presign/blob/main/packages/mcp-server/SKILL.md
 - **Coverage runs out.** 33 conforming deployments across three schema families
   and five networks. `yield-vault` is thin: two deployments on Ethereum, one on
   Arbitrum, none elsewhere. Where R3 has nothing to read, it says so.
-- **One counterparty is slow enough to be refused.** The Uniswap V3 mainnet
-  subgraph answers in 5–6 seconds while four seconds behind head. It is current
-  and slower than the service is willing to wait, so calls that depend on it
-  come back `unavailable`. That is a latency choice, not a data problem, and it
-  is stated here rather than hidden.
-- **The incident registry is a configurable input**, not a maintained feed.
-  R1 supports it; supplying addresses is yours to do.
+- **The Uniswap V3 factory is refused.** R3's sample query for it — the
+  largest pools by value locked — does not finish inside the three-second
+  gateway timeout, so a call to the factory itself comes back `unavailable`.
+  Calls to the *pools* do not: they are checked by id and answer in about a
+  hundred milliseconds warm.
+- **The incident registry lags.** ScamSniffer's open list trails its real-time
+  data by seven days, so a drainer from this week is not on it. Its state is
+  shown on `/health` under `sources` as `incident-registry`.

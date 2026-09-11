@@ -21,17 +21,32 @@
  * saying so did not prevent it — the types now do.
  */
 
+import { createHash } from "node:crypto";
+
 import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { formatUnits6, type PaymentLedger } from "@presign/operational-layer";
 import { paymentMiddleware, setSettlementOverrides } from "@x402/hono";
 import { x402ResourceServer, HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 
 import type { PresignPipeline } from "@presign/gateway";
-import type { VerdictJournal } from "@presign/hedera";
-import type { UnsignedTransaction } from "@presign/verdict-engine";
+import { commitTransaction, newSalt, type VerdictJournal } from "@presign/hedera";
+import { LruMap, type UnsignedTransaction } from "@presign/verdict-engine";
 
-import { parseRules, quote, formatHbar, BASE_TINYBARS, INDEXED_DATA_TINYBARS, type RuleId } from "./pricing.js";
+import {
+  parseRules,
+  quote,
+  formatHbar,
+  BASE_TINYBARS,
+  INDEXED_DATA_TINYBARS,
+  MAX_PRICED_DEPLOYMENTS,
+  PER_DEPLOYMENT_TINYBARS,
+  type Meter,
+  type Quote,
+  type RuleId,
+} from "./pricing.js";
+import { createRateLimiter } from "./rate-limit.js";
 
 export type HederaNetwork = "hedera:testnet" | "hedera:mainnet";
 
@@ -91,6 +106,13 @@ export interface ServiceOptions {
    * Ethereum state, and USDC on Base came back `low`.
    */
   readonly chainIds: readonly number[];
+  /**
+   * Prices /verdict/full by the deployments it will read, counted before the
+   * 402. Omit for the flat price.
+   */
+  readonly meter?: Meter;
+  /** New counterparties one client may price per minute. Defaults to 30. */
+  readonly meterRequestsPerMinute?: number;
   /** Override the facilitator, e.g. a self-hosted one. */
   readonly facilitatorUrl?: string;
   /**
@@ -169,6 +191,31 @@ interface VerdictRequestBody {
   };
 }
 
+/** The slice of the x402 request context a price function reads. */
+type PricingContext = { readonly adapter: { getBody?(): unknown } };
+
+/** A fixed price, or one computed from the request being paid for. */
+type RoutePrice = bigint | ((context: PricingContext) => Promise<bigint>);
+
+/** Raised when a client has priced too many new counterparties this minute. */
+class RateLimitedError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super("rate_limited");
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const HEX = /^0x([0-9a-fA-F]{2})*$/;
+const DECIMAL = /^\d+$/;
+
+/** 128 KiB of calldata: more than any single transaction a block would carry. */
+const MAX_CALLDATA_BYTES = 128 * 1024;
+/** Hex doubles the calldata; the JSON around it is small. */
+const MAX_BODY_BYTES = 2 * MAX_CALLDATA_BYTES + 64 * 1024;
+
 /** Reject a malformed transaction before charging for it. */
 function parseTransaction(body: VerdictRequestBody): UnsignedTransaction {
   const raw = body.transaction;
@@ -176,6 +223,21 @@ function parseTransaction(body: VerdictRequestBody): UnsignedTransaction {
   if (typeof raw.from !== "string") throw new RangeError("transaction.from is required");
   if (typeof raw.data !== "string") throw new RangeError("transaction.data is required");
   if (typeof raw.chainId !== "number") throw new RangeError("transaction.chainId is required");
+
+  // Format after presence, so a missing field is named before a malformed one.
+  if (!ADDRESS.test(raw.from)) {
+    throw new RangeError("transaction.from must be a 0x-prefixed 20-byte address");
+  }
+  if (typeof raw.to === "string" && !ADDRESS.test(raw.to)) {
+    throw new RangeError("transaction.to must be a 0x-prefixed 20-byte address, or null");
+  }
+  if (!HEX.test(raw.data)) throw new RangeError("transaction.data must be 0x-prefixed hex");
+  if (raw.data.length > 2 + 2 * MAX_CALLDATA_BYTES) {
+    throw new RangeError(`transaction.data exceeds ${MAX_CALLDATA_BYTES} bytes`);
+  }
+  if (raw.value !== undefined && !(typeof raw.value === "string" && DECIMAL.test(raw.value))) {
+    throw new RangeError("transaction.value must be a decimal string of wei");
+  }
 
   return {
     from: raw.from as never,
@@ -220,9 +282,114 @@ export function createApp(options: ServiceOptions): Hono {
    * Advertises only routes this process can serve, so the quote and the
    * registered routes cannot drift apart.
    */
-  app.get("/quote", (c) => {
+  const limiter = createRateLimiter({ perMinute: options.meterRequestsPerMinute ?? 30 });
+
+  /**
+   * Who is asking. Behind the reverse proxy the peer is always the proxy, so
+   * the first X-Forwarded-For hop is the client. Without a proxy there is no
+   * header and every caller shares one allowance, which errs toward refusing.
+   */
+  const clientOf = (forwardedFor: string | undefined) =>
+    forwardedFor?.split(",")[0]?.trim() || "direct";
+
+  /** Counting deployments costs work; a price already held does not, and is never limited. */
+  const admitCount = (transaction: UnsignedTransaction, client: string) => {
+    if (options.meter === undefined || options.meter.peek(transaction) !== undefined) return;
+    const taken = limiter.take(client);
+    if (!taken.ok) throw new RateLimitedError(taken.retryAfterSeconds);
+  };
+
+  const tooMany = (c: Context, error: RateLimitedError) => {
+    c.header("Retry-After", String(error.retryAfterSeconds));
+    return c.json(
+      {
+        error: "rate_limited",
+        message:
+          "Too many new counterparties priced from this client in the last minute. " +
+          "Prices already quoted are still served.",
+        retry_after_seconds: error.retryAfterSeconds,
+      },
+      429,
+    );
+  };
+
+  /** `GET /quote?to=0x…`: what a full verdict about this counterparty costs. */
+  const quoteForCounterparty = async (
+    to: string | undefined,
+    chain: string | undefined,
+    client: string,
+  ) => {
+    if (to === undefined || options.meter === undefined || !fullAvailable) return undefined;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to)) {
+      throw new RangeError("to must be a 0x-prefixed 20-byte address");
+    }
+    // `Number("abc")` is NaN, which priced as a chain with nothing indexed.
+    if (chain !== undefined && (!/^\d{1,10}$/.test(chain) || !options.chainIds.includes(Number(chain)))) {
+      throw new RangeError(`chain_id must be one this instance serves: ${options.chainIds.join(", ")}`);
+    }
+    const chainId = chain === undefined ? options.chainIds[0]! : Number(chain);
+    const transaction = {
+      from: "0x0000000000000000000000000000000000000000",
+      to,
+      value: 0n,
+      data: "0x",
+      chainId,
+    } as unknown as UnsignedTransaction;
+    admitCount(transaction, client);
+    const priced = await options.meter.quote(transaction);
+    return {
+      route: "/verdict/full",
+      to: to.toLowerCase(),
+      chain_id: chainId,
+      hbar: priced.hbar,
+      tinybars: priced.tinybars.toString(),
+      deployments: priced.deployments,
+      breakdown: priced.breakdown,
+    };
+  };
+
+  const fullRange = `${formatHbar(BASE_TINYBARS)}–${formatHbar(
+    BASE_TINYBARS + PER_DEPLOYMENT_TINYBARS * BigInt(MAX_PRICED_DEPLOYMENTS),
+  )}`;
+
+  /**
+   * The top-level price, for the rules asked about.
+   *
+   * A flat figure here said 0.005 while the route that runs those rules was
+   * metered at 0.001–0.009: two prices for one verdict in one response. When
+   * the rules asked about are metered, this says so and gives the range; the
+   * exact figure for one counterparty comes from `?to=`.
+   */
+  const requestedPrice = (rules: readonly RuleId[]) => {
+    const metered =
+      options.meter !== undefined && fullAvailable && rules.some((rule) => rule === "R3" || rule === "R4");
+    if (!metered) {
+      const flat = quote(rules);
+      return { ...flat, tinybars: flat.tinybars.toString() };
+    }
+    return {
+      rules,
+      pricing: "metered",
+      hbar: fullRange,
+      tinybars: null,
+      breakdown: [
+        { item: "simulation, R1, R2 and R4", tinybars: BASE_TINYBARS.toString() },
+        {
+          item: `indexed data (R3): ${formatHbar(PER_DEPLOYMENT_TINYBARS)} HBAR per deployment read, at most ${MAX_PRICED_DEPLOYMENTS}`,
+          tinybars: null,
+        },
+      ],
+    };
+  };
+
+  app.get("/quote", async (c) => {
     try {
       const rules = parseRules(c.req.query("rules"));
+      const quoteFor = await quoteForCounterparty(
+        c.req.query("to"),
+        c.req.query("chain_id"),
+        clientOf(c.req.header("x-forwarded-for")),
+      );
       const routes: Record<string, unknown> = {
         "/verdict/local": {
           rules: ["R1", "R2"],
@@ -233,7 +400,18 @@ export function createApp(options: ServiceOptions): Hono {
       if (fullAvailable) {
         routes["/verdict/full"] = {
           rules: ["R1", "R2", "R3", "R4"],
-          hbar: formatHbar(BASE_TINYBARS + INDEXED_DATA_TINYBARS),
+          ...(options.meter === undefined
+            ? { hbar: formatHbar(BASE_TINYBARS + INDEXED_DATA_TINYBARS) }
+            : {
+                pricing: "metered",
+                hbar: fullRange,
+                base_hbar: formatHbar(BASE_TINYBARS),
+                per_deployment_hbar: formatHbar(PER_DEPLOYMENT_TINYBARS),
+                max_priced_deployments: MAX_PRICED_DEPLOYMENTS,
+                how:
+                  "The base price plus one unit per indexed deployment R3 will read for this " +
+                  "counterparty, counted before payment. GET /quote?to=<address> prices one.",
+              }),
           buys:
             "the above, plus protocol invariants from freshness-gated indexed data " +
             "and identification of the counterparty against the deployment registry",
@@ -245,9 +423,9 @@ export function createApp(options: ServiceOptions): Hono {
         chain_ids: options.chainIds,
         facilitator: facilitatorUrl,
         asset: "HBAR",
-        ...quote(rules),
-        tinybars: quote(rules).tinybars.toString(),
+        ...requestedPrice(rules),
         routes,
+        ...(quoteFor === undefined ? {} : { quote_for: quoteFor }),
         ...(fullAvailable
           ? {}
           : {
@@ -255,6 +433,7 @@ export function createApp(options: ServiceOptions): Hono {
             }),
       });
     } catch (error) {
+      if (error instanceof RateLimitedError) return tooMany(c, error);
       return c.json({ error: (error as Error).message }, 400);
     }
   });
@@ -294,15 +473,38 @@ export function createApp(options: ServiceOptions): Hono {
   );
 
   /** One payment option per route: HBAR on the configured network. */
-  const accepts = (tinybars: bigint) => ({
+  const hbarAmount = (tinybars: bigint) => ({ asset: "0.0.0", amount: tinybars.toString() });
+
+  const accepts = (price: RoutePrice) => ({
     scheme: "exact",
     payTo: options.payTo,
     // Quoted as an explicit asset amount rather than a dollar figure, so the
     // charge does not move with an exchange rate between quote and payment.
     // HBAR amounts are in tinybars.
-    price: { asset: "0.0.0", amount: tinybars.toString() },
+    price:
+      typeof price === "bigint"
+        ? hbarAmount(price)
+        : async (context: PricingContext) => hbarAmount(await price(context)),
     network: options.network,
   });
+
+  /*
+   * The full verdict is metered when a meter is supplied.
+   *
+   * A Hedera `exact` payment is a transfer signed for a fixed amount, so the
+   * amount cannot be trimmed after the verdict runs; the only honest metering
+   * is to count what the verdict will read before asking for payment. The
+   * validation middleware has already rejected a malformed body by the time
+   * this runs, so parsing it here cannot fail on the caller's input.
+   */
+  const meter = options.meter;
+  const fullPrice: RoutePrice =
+    meter === undefined
+      ? BASE_TINYBARS + INDEXED_DATA_TINYBARS
+      : async (context) =>
+          (await meter.quote(
+            parseTransaction((await context.adapter.getBody?.()) as VerdictRequestBody),
+          )).tinybars;
 
   /**
    * What an unpaid caller sees in the body of the 402.
@@ -314,24 +516,27 @@ export function createApp(options: ServiceOptions): Hono {
    * the machine-readable contract, and this is the same information in a form
    * a person can read.
    */
-  const explainPayment = (route: string, tinybars: bigint, rules: readonly string[]) =>
-    () => ({
-      contentType: "application/json",
-      body: {
-        error: "payment_required",
-        message: `This endpoint is paid per call. Send an x402 payment of ${formatHbar(tinybars)} HBAR to continue.`,
-        price: { hbar: formatHbar(tinybars), tinybars: tinybars.toString(), asset: "HBAR" },
-        rules,
-        network: options.network,
-        pay_to: options.payTo,
-        how: [
-          "Machine-readable requirements are in the `payment-required` response header (base64 JSON).",
-          "An x402 client signs a Hedera transfer and retries with `payment-signature`.",
-          "See GET /quote for prices without attempting payment.",
-        ],
-        route,
-      },
-    });
+  const explainPayment = (route: string, price: RoutePrice, rules: readonly string[]) =>
+    async (context: PricingContext) => {
+      const tinybars = typeof price === "bigint" ? price : await price(context);
+      return {
+        contentType: "application/json",
+        body: {
+          error: "payment_required",
+          message: `This endpoint is paid per call. Send an x402 payment of ${formatHbar(tinybars)} HBAR to continue.`,
+          price: { hbar: formatHbar(tinybars), tinybars: tinybars.toString(), asset: "HBAR" },
+          rules,
+          network: options.network,
+          pay_to: options.payTo,
+          how: [
+            "Machine-readable requirements are in the `payment-required` response header (base64 JSON).",
+            "An x402 client signs a Hedera transfer and retries with `payment-signature`.",
+            "See GET /quote for prices without attempting payment.",
+          ],
+          route,
+        },
+      };
+    };
 
   const paidRoutes: Record<string, unknown> = {
     "POST /verdict/local": {
@@ -344,13 +549,13 @@ export function createApp(options: ServiceOptions): Hono {
   };
   if (fullAvailable) {
     paidRoutes["POST /verdict/full"] = {
-      accepts: accepts(BASE_TINYBARS + INDEXED_DATA_TINYBARS),
+      accepts: accepts(fullPrice),
       description:
         "Pre-signature risk verdict including protocol invariant checks against freshness-gated indexed data, and the unidentified-counterparty class.",
       mimeType: "application/json",
       unpaidResponseBody: explainPayment(
         "/verdict/full",
-        BASE_TINYBARS + INDEXED_DATA_TINYBARS,
+        fullPrice,
         ["R1", "R2", "R3", "R4"],
       ),
     };
@@ -375,6 +580,31 @@ export function createApp(options: ServiceOptions): Hono {
    * could never be served. Hono caches the parsed body, so the handler's own
    * parse reads the same object rather than the stream twice.
    */
+  /*
+   * A size limit before anything reads the body. The validation below parses
+   * it before payment is asked for, so without a limit one request carrying
+   * hundreds of megabytes of "calldata" would cost memory nobody paid for.
+   */
+  app.use(
+    "/verdict/*",
+    bodyLimit({
+      maxSize: MAX_BODY_BYTES,
+      // The body is refused before it has been read, so the connection still
+      // has unread bytes in it. Closing it keeps a reverse proxy from reusing
+      // it for the next request, which otherwise arrived as a 502.
+      onError: (c) => {
+        c.header("Connection", "close");
+        return c.json(
+          {
+            error: "payload_too_large",
+            message: `request bodies are limited to ${MAX_BODY_BYTES} bytes (calldata up to ${MAX_CALLDATA_BYTES} bytes)`,
+          },
+          413,
+        );
+      },
+    }),
+  );
+
   app.use("/verdict/*", async (c, next) => {
     if (c.req.method !== "POST") return next();
     try {
@@ -394,16 +624,68 @@ export function createApp(options: ServiceOptions): Hono {
           400,
         );
       }
+      // Pricing an unpaid full verdict counts deployments — the same work as
+      // /quote?to= — so it draws on the same allowance.
+      if (c.req.path === "/verdict/full") {
+        admitCount(transaction, clientOf(c.req.header("x-forwarded-for")));
+      }
     } catch (error) {
+      if (error instanceof RateLimitedError) return tooMany(c, error);
       return c.json({ error: (error as Error).message }, 400);
     }
     return next();
   });
 
+  /*
+   * One payment signature, one verdict.
+   *
+   * The payment middleware verifies before the handler and settles after it,
+   * so the handler's work — the simulation, gateway queries, a journal entry
+   * the operator pays for — happens before anyone knows the payment settles.
+   * The same `payment-signature` sent in ten concurrent requests verifies ten
+   * times and settles once: nine verdicts for nothing. So a signature already
+   * in flight is refused, and so is one that has already bought a verdict. A
+   * signature whose request failed is forgotten, so a client may retry it.
+   * The memory is this process's; a second instance behind the same proxy
+   * would need a shared one.
+   */
+  const paymentsInFlight = new Set<string>();
+  const paymentsUsed = new LruMap<string, number>(10_000);
+  const PAYMENT_MEMORY_MS = 15 * 60 * 1000;
+  app.use("/verdict/*", async (c, next) => {
+    const signature = c.req.header("payment-signature") ?? c.req.header("x-payment");
+    if (c.req.method !== "POST" || signature === undefined) return next();
+    const key = createHash("sha256").update(signature).digest("hex");
+    const usedAt = paymentsUsed.get(key);
+    if (paymentsInFlight.has(key) || (usedAt !== undefined && Date.now() - usedAt < PAYMENT_MEMORY_MS)) {
+      return c.json(
+        {
+          error: "payment_already_used",
+          message:
+            "This payment signature is already buying a verdict, or has bought one. " +
+            "Sign a new payment for a new verdict.",
+        },
+        409,
+      );
+    }
+    paymentsInFlight.add(key);
+    try {
+      await next();
+      if (c.res.status < 400) paymentsUsed.set(key, Date.now());
+    } finally {
+      paymentsInFlight.delete(key);
+    }
+    return undefined;
+  });
+
   app.use(paymentMiddleware(paidRoutes as never, server) as never);
 
   const handle =
-    (pipeline: PresignPipeline, rules: readonly RuleId[]) =>
+    (
+      pipeline: PresignPipeline,
+      rules: readonly RuleId[],
+      price?: (transaction: UnsignedTransaction) => Promise<Quote>,
+    ) =>
     async (c: Context) => {
       let transaction: UnsignedTransaction;
       let journalMode: JournalMode;
@@ -415,6 +697,9 @@ export function createApp(options: ServiceOptions): Hono {
       }
 
       const started = Date.now();
+      // The same quote the 402 carried: the meter holds it well past the
+      // exchange, so what the response says was charged is what was paid.
+      const charged = price === undefined ? quote(rules) : await price(transaction);
       // Marked before the run so the payments attributed to this verdict are
       // the ones it actually caused, not everything the process has spent.
       const spentBefore = options.ledger?.count ?? 0;
@@ -466,10 +751,17 @@ export function createApp(options: ServiceOptions): Hono {
        * is still made; what changes is that the response cannot cite it, so it
        * says `queued` rather than a sequence number it does not have.
        */
+      /*
+       * The salt is chosen here, before either write, so an asynchronous
+       * response can hand it over even though the entry has not landed. It is
+       * the only way the caller will ever match the public entry to their
+       * transaction, and it is never published.
+       */
+      const salt = newSalt();
       let journalled: Record<string, unknown>;
       if (journalMode === "async") {
         void options.journal
-          .record(transaction, outcome.verdict)
+          .record(transaction, outcome.verdict, salt)
           .catch((error: unknown) => {
             journalFailures += 1;
             console.error(
@@ -482,18 +774,21 @@ export function createApp(options: ServiceOptions): Hono {
           mode: "async",
           topic: options.journal.topicId,
           status: "queued",
+          tx_commitment: commitTransaction(transaction, salt),
+          salt,
           note:
             "the entry is being written and this response cannot cite it. " +
             "Use ?journal=sync for a sequence number in the response.",
         };
       } else {
-        const receipt = await options.journal.record(transaction, outcome.verdict);
+        const receipt = await options.journal.record(transaction, outcome.verdict, salt);
         journalled = {
           mode: "sync",
           topic: receipt.topicId,
           sequence: receipt.sequenceNumber,
           consensus_timestamp: receipt.consensusTimestamp,
-          tx_hash: receipt.entry.txHash,
+          tx_commitment: receipt.entry.txCommitment,
+          salt: receipt.salt,
         };
       }
 
@@ -510,6 +805,7 @@ export function createApp(options: ServiceOptions): Hono {
             evidence: finding.evidence,
           })),
           provenance: outcome.verdict.provenance,
+          effects: outcome.verdict.effects,
         },
         // What the call actually consumed, so the price is checkable rather
         // than merely quoted.
@@ -517,7 +813,8 @@ export function createApp(options: ServiceOptions): Hono {
           rules_run: rules,
           indexed_sources_used: outcome.verdict.provenance.sources.length,
           elapsed_ms: Date.now() - started,
-          charged: quote(rules).hbar + " HBAR",
+          charged: `${charged.hbar} HBAR`,
+          pricing: charged.breakdown,
           /*
            * Both sides of the trade, in one place.
            *
@@ -537,7 +834,11 @@ export function createApp(options: ServiceOptions): Hono {
   if (options.pipelines.full !== undefined) {
     app.post(
       "/verdict/full",
-      handle(options.pipelines.full, ["R1", "R2", "R3", "R4"]),
+      handle(
+        options.pipelines.full,
+        ["R1", "R2", "R3", "R4"],
+        meter === undefined ? undefined : (transaction) => meter.quote(transaction),
+      ),
     );
   }
 

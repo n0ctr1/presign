@@ -30,6 +30,7 @@ import {
 } from "@presign/operational-layer";
 import {
   AnvilFork,
+  countInvariantCandidates,
   describeRpc,
   ForkSimulator,
   InvariantBreachRule,
@@ -48,6 +49,7 @@ import { buildRegistryClient } from "./registry.js";
 import { ProxyUpgradeIndex } from "@presign/substreams";
 
 import { createApp, FACILITATORS, type HederaNetwork } from "./app.js";
+import { createMeter, type Meter } from "./pricing.js";
 import { readTopicId, writeTopicId } from "./state.js";
 
 /**
@@ -237,6 +239,7 @@ async function main(): Promise<void> {
    */
   let full: PresignPipeline | undefined;
   let closeRegistry: (() => void) | undefined;
+  let meter: Meter | undefined;
   try {
     /*
      * How gateway queries are funded.
@@ -247,6 +250,15 @@ async function main(): Promise<void> {
      * situation x402 was built for — an agent that needs protocol data and
      * has no human available to mint it a key.
      */
+    /** A decimal USDC amount as six-decimal units, without floating point. */
+    const usdcUnits = (text: string) => {
+      if (!/^\d+(\.\d{1,6})?$/.test(text)) {
+        throw new RangeError(`GATEWAY_MAX_SPEND_USDC is not a USDC amount: ${text}`);
+      }
+      const [whole, fraction = ""] = text.split(".");
+      return (BigInt(whole!) * 1_000_000n + BigInt(fraction.padEnd(6, "0"))).toString();
+    };
+    const maxSpend = process.env["GATEWAY_MAX_SPEND_USDC"];
     const choice = chooseFunding({
       studioKey: await readSecret("the-graph__studio-api-key").catch(() => null),
       payerKey: await readSecret("base__payer-key").catch(() => null),
@@ -254,6 +266,7 @@ async function main(): Promise<void> {
       ...(process.env["GATEWAY_FUNDING"] === "x402"
         ? { prefer: "x402" as const }
         : {}),
+      ...(maxSpend === undefined ? {} : { maxTotalAmount: usdcUnits(maxSpend) }),
     });
     usingX402 = choice.funding.kind === "x402";
     console.log(`  gateway funding: ${choice.reason}`);
@@ -295,6 +308,16 @@ async function main(): Promise<void> {
       }),
     });
     console.log("  R3 and R4 enabled — /verdict/full is offered");
+
+    // Priced by the deployments R3 will read, counted with the rule's own
+    // selection against the registry and the fork — never the metered gateway.
+    meter = createMeter({
+      count: (transaction) =>
+        countInvariantCandidates(protocol, transaction.to, transaction.chainId, (address, data) =>
+          simulator.call(address, data),
+        ),
+    });
+    console.log("  /verdict/full is metered by the indexed deployments it reads");
   } catch (error) {
     console.log(
       `  R3 and R4 disabled — /verdict/full is NOT offered (${error instanceof Error ? error.message : String(error)})`,
@@ -329,6 +352,7 @@ async function main(): Promise<void> {
     payTo: operatorId,
     network,
     chainIds: [chainId],
+    ...(meter === undefined ? {} : { meter }),
     ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
   });
 

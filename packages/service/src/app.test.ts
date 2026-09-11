@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createApp, FACILITATORS, parseJournalMode } from "../dist/index.js";
+import { createApp, createMeter, FACILITATORS, parseJournalMode } from "../dist/index.js";
+import type { Meter } from "../dist/index.js";
 import type { PresignPipeline } from "@presign/gateway";
 import { InMemoryVerdictJournal } from "@presign/hedera";
 
@@ -37,9 +38,10 @@ const body = JSON.stringify({
   },
 });
 
-const appWith = (full?: PresignPipeline) =>
+const appWith = (full?: PresignPipeline, meter?: Meter) =>
   createApp({
     pipelines: full === undefined ? { local: pipeline("low") } : { local: pipeline("low"), full },
+    ...(meter === undefined ? {} : { meter }),
     journal,
     payTo: "0.0.10398276",
     network: "hedera:testnet",
@@ -48,6 +50,53 @@ const appWith = (full?: PresignPipeline) =>
     // failing test cannot depend on someone else's uptime.
     facilitatorUrl: "http://127.0.0.1:9",
   });
+
+test("a chain id this instance does not serve is refused on /quote, not priced", async () => {
+  const app = appWith(pipeline("low"), createMeter({ count: () => Promise.resolve(2) }));
+
+  // "abc" used to become NaN and be priced as a chain with nothing indexed.
+  for (const chain of ["abc", "137", "1.5"]) {
+    const response = await app.request(
+      `/quote?to=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48&chain_id=${chain}`,
+    );
+    assert.equal(response.status, 400, chain);
+  }
+  const served = await app.request("/quote?to=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48&chain_id=1");
+  assert.equal(served.status, 200);
+});
+
+test("with metering, the top-level price is the metered range, not a flat figure", async () => {
+  const app = appWith(pipeline("low"), createMeter({ count: () => Promise.resolve(2) }));
+
+  const quote = (await (await app.request("/quote")).json()) as {
+    pricing?: string;
+    hbar: string;
+    tinybars: unknown;
+  };
+
+  assert.equal(quote.pricing, "metered");
+  assert.equal(quote.hbar, "0.001–0.009");
+  assert.equal(quote.tinybars, null);
+
+  // The cheap rules alone are not metered, and keep their one price.
+  const local = (await (await app.request("/quote?rules=R1,R2")).json()) as { hbar: string };
+  assert.equal(local.hbar, "0.001");
+});
+
+test("one payment signature buys one verdict: a concurrent duplicate is refused", async () => {
+  const app = appWith();
+  const send = () =>
+    app.request("/verdict/local", {
+      method: "POST",
+      body,
+      headers: { "payment-signature": "the-same-signature" },
+    });
+
+  const statuses = (await Promise.all([send(), send()])).map((response) => response.status);
+
+  // Verified twice and settled once would be two verdicts for one payment.
+  assert.equal(statuses.filter((status) => status === 409).length, 1);
+});
 
 test("without an R3-capable pipeline, the dearer route does not exist", async () => {
   const app = appWith();
@@ -198,6 +247,96 @@ test("quote and health name the chains served and the facilitator that settles",
   assert.deepEqual(health.chain_ids, [1]);
   assert.equal(quote.facilitator, "http://127.0.0.1:9");
   assert.equal(health.facilitator, "http://127.0.0.1:9");
+});
+
+test("a metered instance quotes the full verdict by the deployments it will read", async () => {
+  const POOL = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640";
+  const meter = createMeter({
+    count: (transaction) => Promise.resolve(transaction.to?.toLowerCase() === POOL ? 3 : 0),
+  });
+  const app = appWith(pipeline("low"), meter);
+
+  const general = (await (await app.request("/quote")).json()) as {
+    routes: Record<string, { pricing?: string; hbar: string; per_deployment_hbar?: string }>;
+  };
+  assert.equal(general.routes["/verdict/full"]?.pricing, "metered");
+  assert.equal(general.routes["/verdict/full"]?.hbar, "0.001–0.009");
+  assert.equal(general.routes["/verdict/full"]?.per_deployment_hbar, "0.001");
+
+  const pool = (await (await app.request(`/quote?to=${POOL}`)).json()) as {
+    quote_for: { hbar: string; deployments: number; breakdown: { item: string }[] };
+  };
+  // Three deployments read, three units charged; USDC, read from none, pays the base.
+  assert.equal(pool.quote_for.hbar, "0.004");
+  assert.equal(pool.quote_for.deployments, 3);
+
+  const usdc = (await (
+    await app.request("/quote?to=0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+  ).json()) as { quote_for: { hbar: string } };
+  assert.equal(usdc.quote_for.hbar, "0.001");
+
+  const bad = await app.request("/quote?to=not-an-address");
+  assert.equal(bad.status, 400);
+});
+
+test("an oversized body is refused before it is read", async () => {
+  const tx = (JSON.parse(body) as { transaction: object }).transaction;
+  const response = await appWith().request("/verdict/local", {
+    method: "POST",
+    body: JSON.stringify({ transaction: { ...tx, data: `0x${"ab".repeat(400_000)}` } }),
+  });
+
+  // Parsed before payment is asked for, so an unlimited body is free memory
+  // for whoever sends it.
+  assert.equal(response.status, 413);
+});
+
+test("a malformed address, calldata or value is refused before payment", async () => {
+  const tx = (JSON.parse(body) as { transaction: object }).transaction;
+  const cases: readonly [string, string, RegExp][] = [
+    ["from", "0x1234", /transaction\.from/],
+    ["to", "not-an-address", /transaction\.to/],
+    ["data", "0xzz", /transaction\.data/],
+    ["value", "-1", /transaction\.value/],
+  ];
+  for (const [field, value, pattern] of cases) {
+    const response = await appWith().request("/verdict/local", {
+      method: "POST",
+      body: JSON.stringify({ transaction: { ...tx, [field]: value } }),
+    });
+    assert.equal(response.status, 400, field);
+    assert.match(((await response.json()) as { error: string }).error, pattern);
+  }
+});
+
+test("pricing new counterparties is limited per client, and held prices are not", async () => {
+  const app = createApp({
+    pipelines: { local: pipeline("low"), full: pipeline("low") },
+    journal,
+    payTo: "0.0.10398276",
+    network: "hedera:testnet",
+    chainIds: [1],
+    facilitatorUrl: "http://127.0.0.1:9",
+    meter: createMeter({ count: () => Promise.resolve(1) }),
+    meterRequestsPerMinute: 2,
+  });
+  const address = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
+  const ask = (to: string, ip = "203.0.113.7") =>
+    app.request(`/quote?to=${to}`, { headers: { "x-forwarded-for": `${ip}, 10.0.0.1` } });
+
+  assert.equal((await ask(address(1))).status, 200);
+  assert.equal((await ask(address(2))).status, 200);
+
+  // Walking through addresses makes the service count deployments for each,
+  // for free. The third new one in a minute is refused.
+  const limited = await ask(address(3));
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1);
+
+  // A price already held costs nothing to repeat, and another client has its
+  // own allowance.
+  assert.equal((await ask(address(1))).status, 200);
+  assert.equal((await ask(address(3), "198.51.100.9")).status, 200);
 });
 
 test("both Hedera networks settle through Blocky402", () => {

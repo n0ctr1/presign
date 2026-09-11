@@ -15,9 +15,14 @@ export {
   BASE_TINYBARS,
   INDEXED_DATA_TINYBARS,
   RULE_IDS,
+  createMeter,
+  meteredQuote,
+  MAX_PRICED_DEPLOYMENTS,
+  PER_DEPLOYMENT_TINYBARS,
 } from "./pricing.js";
-export type { Quote, RuleId } from "./pricing.js";
+export type { Meter, MeteredQuote, MeterOptions, Quote, RuleId } from "./pricing.js";
 // Exported so anything else that opens the journal reuses the same topic. A
 // second entry point creating its own would fragment the record the first one
 // is building, which is the failure this file exists to prevent.
 export { readTopicId, writeTopicId } from "./state.js";
+export { createRateLimiter, type RateLimiter, type RateLimiterOptions } from "./rate-limit.js";

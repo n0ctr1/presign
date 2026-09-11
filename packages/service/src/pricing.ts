@@ -16,6 +16,8 @@
  * rather than trusting our pricing.
  */
 
+import { LruMap, MAX_INVARIANT_CANDIDATES, type UnsignedTransaction } from "@presign/verdict-engine";
+
 /** Rules a caller may request. Ordered by what they cost to run. */
 export const RULE_IDS = ["R1", "R2", "R3", "R4"] as const;
 export type RuleId = (typeof RULE_IDS)[number];
@@ -98,6 +100,133 @@ export function quote(rules: readonly RuleId[]): Quote {
     tinybars: total,
     hbar: formatHbar(total),
     breakdown,
+  };
+}
+
+/**
+ * Price per indexed deployment R3 reads, for a metered full verdict.
+ *
+ * The flat surcharge above charged a call to USDC — which no conforming
+ * deployment speaks for, so R3 reads nothing — the same as a call to a pool
+ * read from three deployments. Each deployment R3 reads costs a conformance
+ * probe, a liveness check and a data query against the metered gateway, so a
+ * deployment is the unit.
+ */
+export const PER_DEPLOYMENT_TINYBARS = 100_000n; // 0.001 HBAR
+
+/**
+ * Deployments priced at most — the same number R3 probes at most. The two used
+ * to differ: the price stopped at eight while R3 probed every candidate, so a
+ * counterparty indexed by dozens of deployments cost queries nobody paid for.
+ */
+export const MAX_PRICED_DEPLOYMENTS = MAX_INVARIANT_CANDIDATES;
+
+export interface MeteredQuote extends Quote {
+  /** Deployments R3 will read for this counterparty; null when they could not be counted. */
+  readonly deployments: number | null;
+}
+
+export function meteredQuote(deployments: number | null): MeteredQuote {
+  const priced =
+    deployments === null
+      ? MAX_PRICED_DEPLOYMENTS
+      : Math.min(deployments, MAX_PRICED_DEPLOYMENTS);
+  const indexed = PER_DEPLOYMENT_TINYBARS * BigInt(priced);
+  const total = BASE_TINYBARS + indexed;
+
+  const indexedItem =
+    deployments === null
+      ? `indexed data (R3): deployments could not be counted, priced at the ${MAX_PRICED_DEPLOYMENTS}-deployment ceiling`
+      : `indexed data (R3): ${priced} deployment${priced === 1 ? "" : "s"}` +
+        (deployments > MAX_PRICED_DEPLOYMENTS ? ` of ${deployments}, capped` : "") +
+        ` at ${formatHbar(PER_DEPLOYMENT_TINYBARS)} HBAR each`;
+
+  return {
+    rules: RULE_IDS,
+    tinybars: total,
+    hbar: formatHbar(total),
+    breakdown: [
+      { item: "simulation, R1, R2 and R4", tinybars: BASE_TINYBARS.toString() },
+      { item: indexedItem, tinybars: indexed.toString() },
+    ],
+    deployments,
+  };
+}
+
+export interface Meter {
+  quote(transaction: UnsignedTransaction): Promise<MeteredQuote>;
+  /** The price already held for this counterparty, without counting anything. */
+  peek(transaction: UnsignedTransaction): MeteredQuote | undefined;
+}
+
+export interface MeterOptions {
+  /** How many deployments R3 would read for this transaction's counterparty. */
+  readonly count: (transaction: UnsignedTransaction) => Promise<number>;
+  /**
+   * How long a price holds, in seconds.
+   *
+   * The x402 exchange prices a request twice: once for the 402, and again when
+   * the paid retry is verified. A count that moved between the two would reject
+   * a payment made in good faith. Five minutes is far longer than that exchange
+   * and far shorter than the time it takes somebody to publish a subgraph.
+   */
+  readonly ttlSeconds?: number;
+  /** A failed count is priced at the ceiling, but only held this long. */
+  readonly failureTtlSeconds?: number;
+  /**
+   * Counterparties priced and remembered at most. Anyone may ask for a price
+   * about any address, so the memo is bounded rather than grown per request.
+   */
+  readonly maxEntries?: number;
+  readonly now?: () => number;
+}
+
+/**
+ * Prices a full verdict by the deployments it will read, counted before payment.
+ *
+ * Counting costs registry lookups and a few calls against the fork — nothing
+ * against the metered gateway — and uses the same selection the rule then
+ * spends queries on, so the quote is what the verdict reads rather than an
+ * estimate of it.
+ */
+export function createMeter(options: MeterOptions): Meter {
+  const ttl = (options.ttlSeconds ?? 300) * 1000;
+  const failureTtl = (options.failureTtlSeconds ?? 30) * 1000;
+  const now = options.now ?? Date.now;
+  const cache = new LruMap<string, { quote: MeteredQuote; expires: number }>(options.maxEntries ?? 10_000);
+  const inflight = new Map<string, Promise<MeteredQuote>>();
+
+  const keyOf = (transaction: UnsignedTransaction) =>
+    `${transaction.chainId}:${(transaction.to ?? "create").toLowerCase()}`;
+  const held = (key: string) => {
+    const hit = cache.get(key);
+    return hit !== undefined && now() < hit.expires ? hit.quote : undefined;
+  };
+
+  return {
+    peek: (transaction) => held(keyOf(transaction)),
+    quote(transaction) {
+      const key = keyOf(transaction);
+      const hit = held(key);
+      if (hit !== undefined) return Promise.resolve(hit);
+
+      let pending = inflight.get(key);
+      if (pending === undefined) {
+        pending = options
+          .count(transaction)
+          .then(
+            (count) => ({ quote: meteredQuote(count), hold: ttl }),
+            () => ({ quote: meteredQuote(null), hold: failureTtl }),
+          )
+          .then(({ quote: priced, hold }) => {
+            cache.set(key, { quote: priced, expires: now() + hold });
+            inflight.delete(key);
+            return priced;
+          });
+        inflight.set(key, pending);
+      }
+      return pending;
+    },
   };
 }
 

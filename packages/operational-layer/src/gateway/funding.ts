@@ -109,6 +109,15 @@ export interface GatewayFunding {
    * the request retried; for a Studio key it is the plain one.
    */
   readonly fetch: typeof globalThis.fetch;
+  /**
+   * Send a request whose timeout starts when it is actually sent.
+   *
+   * Optional: without it the client puts its own timeout around `fetch`.
+   * Funding that queues requests implements it, because a timer started
+   * before the queue spends itself waiting, and can expire in the middle of a
+   * paid retry — the payment settled, the answer thrown away.
+   */
+  request?(url: string, init: RequestInit, timeoutMs: number): Promise<Response>;
 }
 
 /** Draws on a Studio plan. The per-query cost is real but arrives as a bill. */
@@ -149,6 +158,29 @@ export const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
  */
 export const DEFAULT_MAX_PER_QUERY = "50000";
 
+/**
+ * Ceiling on everything one process pays the gateway, in USDC's smallest unit.
+ *
+ * The per-query cap stops one hostile price and does nothing about a thousand
+ * honest ones. A verdict reads a handful of deployments at a cent each, so a
+ * dollar is about a hundred queries: ample for a demo run, and a loss someone
+ * notices rather than a drain nobody does. Raised deliberately, never by
+ * default.
+ */
+export const DEFAULT_MAX_TOTAL_SPEND = "1000000";
+
+/** Raised before a payment is signed: this process has spent what it may. */
+export class GatewaySpendLimitError extends Error {
+  constructor(spent: bigint, limit: bigint, asked: bigint) {
+    super(
+      `paying ${formatUnits6(asked.toString(), "USDC")} would take this process past its gateway ` +
+        `spend limit of ${formatUnits6(limit.toString(), "USDC")} ` +
+        `(${formatUnits6(spent.toString(), "USDC")} signed so far). Nothing was paid.`,
+    );
+    this.name = "GatewaySpendLimitError";
+  }
+}
+
 export interface X402FundingOptions {
   /** Signs EIP-3009 authorisations. A viem LocalAccount satisfies this. */
   readonly signer: {
@@ -163,6 +195,8 @@ export interface X402FundingOptions {
   readonly ledger: PaymentLedger;
   /** Per-payment ceiling, smallest unit. Defaults to {@link DEFAULT_MAX_PER_QUERY}. */
   readonly maxAmountPerQuery?: string;
+  /** Ceiling on this process's total, smallest unit. Defaults to {@link DEFAULT_MAX_TOTAL_SPEND}. */
+  readonly maxTotalAmount?: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly now?: () => Date;
   /**
@@ -191,9 +225,12 @@ export interface X402FundingOptions {
 export class X402Funding implements GatewayFunding {
   readonly kind = "x402" as const;
   readonly fetch: typeof globalThis.fetch;
+  readonly request: NonNullable<GatewayFunding["request"]>;
 
   constructor(options: X402FundingOptions) {
-    this.fetch = buildPayingFetch(options);
+    const paying = buildPayingFetch(options);
+    this.fetch = paying.fetch;
+    this.request = paying.request;
   }
 
   url(baseUrl: string, deploymentId: DeploymentId): string {
@@ -229,12 +266,24 @@ export function formatUnits6(amount: string, symbol: string): string {
  * deployment's price to another's payment — a small bug that would corrupt
  * exactly the number this whole path exists to report.
  */
-function buildPayingFetch(options: X402FundingOptions): typeof globalThis.fetch {
+function buildPayingFetch(options: X402FundingOptions): {
+  fetch: typeof globalThis.fetch;
+  request: NonNullable<GatewayFunding["request"]>;
+} {
   const baseFetch = options.fetch ?? globalThis.fetch;
   const serialise = options.serialisePayments ?? true;
   const now = options.now ?? (() => new Date());
   const maxAmount = options.maxAmountPerQuery ?? DEFAULT_MAX_PER_QUERY;
+  const maxTotal = BigInt(options.maxTotalAmount ?? DEFAULT_MAX_TOTAL_SPEND);
   const manifests = new Map<string, PaymentRequirementsLike>();
+  // Everything signed so far, and what the current turn is signing. Exact
+  // with serialised payments, which is the default and the only safe setting
+  // against The Graph's gateway.
+  let committed = 0n;
+  const turn: { signing: bigint | null; refusal: GatewaySpendLimitError | null } = {
+    signing: null,
+    refusal: null,
+  };
 
   const observing: typeof globalThis.fetch = async (input, init) => {
     const response = await baseFetch(input, init);
@@ -258,7 +307,22 @@ function buildPayingFetch(options: X402FundingOptions): typeof globalThis.fetch 
         },
       ],
     })
-    .register(`${BASE_NETWORK.split(":")[0]}:*`, new ExactEvmScheme(options.signer));
+    .register(`${BASE_NETWORK.split(":")[0]}:*`, new ExactEvmScheme(options.signer))
+    .onBeforePaymentCreation(async ({ selectedRequirements }) => {
+      const asked = BigInt(selectedRequirements.amount);
+      if (committed + asked > maxTotal) {
+        turn.refusal = new GatewaySpendLimitError(committed, maxTotal, asked);
+        return { abort: true, reason: turn.refusal.message };
+      }
+      turn.signing = asked;
+      return undefined;
+    })
+    .onAfterPaymentCreation(async () => {
+      // Counted at signature. An EIP-3009 authorisation can be settled by
+      // whoever holds it, whether or not a settlement header ever comes back.
+      if (turn.signing !== null) committed += turn.signing;
+      turn.signing = null;
+    });
 
   const pay = wrapFetchWithPayment(observing, client);
 
@@ -290,9 +354,29 @@ function buildPayingFetch(options: X402FundingOptions): typeof globalThis.fetch 
     return result;
   };
 
-  return async (input, init) => {
+  const send = async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init: RequestInit | undefined,
+    timeoutMs?: number,
+  ): Promise<Response> => {
     const url = requestUrl(input);
-    const response = await inTurn(() => pay(input, init));
+    const response = await inTurn(async () => {
+      turn.refusal = null;
+      try {
+        // The timer starts here, inside the turn. Started before the queue it
+        // spent itself waiting, and could expire during a paid retry that had
+        // already settled — an answer paid for and never read.
+        return await pay(
+          input,
+          timeoutMs === undefined ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) },
+        );
+      } catch (error) {
+        // The payment wrapper rewraps what the client throws; the limit is
+        // handed back as itself so the reason survives into the verdict.
+        const refusal = turn.refusal as GatewaySpendLimitError | null;
+        throw refusal ?? error;
+      }
+    });
 
     const settlementHeader = response.headers.get("payment-response");
     if (settlementHeader !== null) {
@@ -316,6 +400,11 @@ function buildPayingFetch(options: X402FundingOptions): typeof globalThis.fetch 
     }
 
     return response;
+  };
+
+  return {
+    fetch: (input, init) => send(input, init),
+    request: (url, init, timeoutMs) => send(url, init, timeoutMs),
   };
 }
 
@@ -393,6 +482,8 @@ export interface ChooseFundingOptions {
   /** Force one method. Without it the choice follows what is available. */
   readonly prefer?: "studio-key" | "x402";
   readonly maxAmountPerQuery?: string;
+  /** Ceiling on this process's total gateway spend, smallest unit of USDC. */
+  readonly maxTotalAmount?: string;
   readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -424,6 +515,7 @@ export function chooseFunding(options: ChooseFundingOptions): FundingChoice {
         ...(options.maxAmountPerQuery === undefined
           ? {}
           : { maxAmountPerQuery: options.maxAmountPerQuery }),
+        ...(options.maxTotalAmount === undefined ? {} : { maxTotalAmount: options.maxTotalAmount }),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       }),
       reason: `paying per query over x402 on Base from ${signer.address}`,

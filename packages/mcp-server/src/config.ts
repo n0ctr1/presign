@@ -6,8 +6,6 @@
  * than scattered through tool handlers.
  */
 
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable, Writable } from "node:stream";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -18,8 +16,9 @@ import {
   GatewayClient,
   JsonRpcChainHeadSource,
   LivenessProbe,
+  REGISTRY_PACKAGE,
+  RegistrySubprocess,
   SubgraphRegistrySource,
-  type RegistryToolCaller,
 } from "@presign/operational-layer";
 import {
   EnvSecretSource,
@@ -27,22 +26,6 @@ import {
   SecretResolver,
   type SecretRef,
 } from "@presign/secrets";
-
-/**
- * How long a registry call may take before it is treated as a failure.
- *
- * Without this a dead subprocess is indistinguishable from a slow one: the
- * promise for its reply is never settled by anything, so a caller waits for a
- * process that will never answer. Observed exactly once and it cost an hour —
- * a run that had finished its work sat in `ep_poll` with no children, no
- * output and no error, looking like a hang in code that had already done its
- * job.
- *
- * Fifteen seconds is generous for a local subprocess answering from its own
- * cache, and short enough that a service refuses a verdict rather than holding
- * a connection open until the caller gives up.
- */
-const REGISTRY_TIMEOUT_MS = 15_000;
 
 const STUDIO_KEY: SecretRef = { scope: "the-graph", name: "studio-api-key" };
 const SUBSTREAMS_KEY: SecretRef = { scope: "substreams", name: "api-key" };
@@ -79,109 +62,6 @@ export interface ServerConfig {
   readonly upgrades?: ProxyUpgradeIndex;
   /** Called on shutdown to release the registry subprocess and the stream. */
   readonly close: () => void;
-}
-
-/**
- * Speaks JSON-RPC to `subgraph-registry-mcp` over stdio.
- *
- * The registry ships as an MCP server, so this process is an MCP client of it
- * while being an MCP server to its own callers. Framing is newline-delimited
- * JSON-RPC, which is the whole protocol here — pulling in a client SDK to send
- * three message shapes would add a dependency without removing any code.
- */
-class RegistrySubprocess implements RegistryToolCaller {
-  // stderr is "ignore", so it is typed null rather than a stream: the
-  // registry logs progress there and we have no use for it.
-  readonly #child: ChildProcessByStdio<Writable, Readable, null>;
-  readonly #pending = new Map<number, (message: unknown) => void>();
-  #buffer = "";
-  #nextId = 0;
-  #ready: Promise<void>;
-
-  constructor(command: string, args: readonly string[]) {
-    this.#child = spawn(command, [...args], {
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-
-    this.#child.stdout.setEncoding("utf8");
-    this.#child.stdout.on("data", (chunk: string) => this.#onData(chunk));
-
-    this.#ready = this.#handshake();
-  }
-
-  #onData(chunk: string): void {
-    this.#buffer += chunk;
-    for (;;) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline < 0) break;
-      const line = this.#buffer.slice(0, newline).trim();
-      this.#buffer = this.#buffer.slice(newline + 1);
-      if (line.length === 0) continue;
-      try {
-        const message = JSON.parse(line) as { id?: number };
-        if (typeof message.id === "number") {
-          this.#pending.get(message.id)?.(message);
-          this.#pending.delete(message.id);
-        }
-      } catch {
-        // The registry writes progress lines to stdout alongside JSON-RPC.
-        // Anything unparseable is not a response we are waiting on.
-      }
-    }
-  }
-
-  /**
-   * Send one JSON-RPC message and wait for its reply.
-   *
-   * Rejects on timeout rather than resolving with nothing, because the two
-   * mean different things to every caller above: a rule that gets `undefined`
-   * reports "nothing indexes this contract", which is a claim about the chain,
-   * while a rejection reports that we could not ask — and only the second is
-   * allowed to become `unavailable` instead of a clean verdict.
-   */
-  #send(method: string, params?: unknown): Promise<unknown> {
-    const id = ++this.#nextId;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#pending.delete(id);
-        reject(new Error(`registry did not answer ${method} within ${REGISTRY_TIMEOUT_MS}ms`));
-      }, REGISTRY_TIMEOUT_MS);
-      // `unref` so a pending call cannot by itself keep the process alive.
-      timer.unref?.();
-
-      this.#pending.set(id, (message) => {
-        clearTimeout(timer);
-        resolve(message);
-      });
-      this.#child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
-      );
-    });
-  }
-
-  async #handshake(): Promise<void> {
-    await this.#send("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: { name: "presign", version: "0.0.1" },
-    });
-    this.#child.stdin.write(
-      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-    );
-  }
-
-  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    await this.#ready;
-    const response = (await this.#send("tools/call", {
-      name,
-      arguments: args,
-    })) as { result?: unknown };
-    return response.result;
-  }
-
-  close(): void {
-    this.#child.kill();
-  }
 }
 
 export interface BuildConfigOptions {
@@ -223,10 +103,13 @@ export async function buildConfig(
     apiKey: async () => (await secrets.resolve(STUDIO_KEY)).value,
   });
 
-  const registry = new RegistrySubprocess(
-    options.registryCommand ?? "npx",
-    options.registryArgs ?? ["-y", "subgraph-registry-mcp"],
-  );
+  // The shared client: pinned package, restarted after a crash, and started
+  // with none of this server's credentials except the Studio key.
+  const registry = new RegistrySubprocess({
+    command: options.registryCommand ?? "npx",
+    args: options.registryArgs ?? ["-y", REGISTRY_PACKAGE],
+    clientName: "presign",
+  });
 
   const discovery = new SubgraphRegistrySource(registry);
   const conformance = new ConformanceProbe({ gateway });

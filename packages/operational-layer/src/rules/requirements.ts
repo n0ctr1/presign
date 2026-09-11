@@ -23,7 +23,7 @@ import type { RuleRequirement } from "../types.js";
 /**
  * Default freshness budget.
  *
- * Thirty seconds is roughly two Ethereum blocks. Tighter than that and honest
+ * Thirty seconds is two and a half Ethereum blocks. Tighter than that and honest
  * deployments fail the budget on ordinary gateway jitter; looser and the data
  * predates the mempool state the transaction is actually about to land in.
  */

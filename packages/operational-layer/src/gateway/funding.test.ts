@@ -184,6 +184,52 @@ test("a query pays on 402, retries, and records what the manifest asked", async 
   assert.equal(payment!.transaction, "0xsettled");
 });
 
+test("a process stops paying at its total ceiling, before signing", async () => {
+  const ledger = new PaymentLedger();
+  const gateway = payingGateway({ amount: "10000" });
+  const client = new GatewayClient({
+    baseUrl: BASE_URL,
+    timeoutMs: 30_000,
+    funding: new X402Funding({ signer: account, ledger, fetch: gateway.fetch, maxTotalAmount: "15000" }),
+  });
+
+  await client.query(DEPLOYMENT, "{ _meta { block { number } } }");
+  // The second cent would pass the per-query cap and break the total.
+  await assert.rejects(
+    client.query(DEPLOYMENT, "{ _meta { block { number } } }"),
+    /spend limit of 0\.015 USDC/,
+  );
+
+  assert.equal(ledger.payments.length, 1);
+  // Priced, then refused: no signature was sent for the second query.
+  assert.deepEqual(gateway.calls, ["unpaid", "paid", "unpaid"]);
+});
+
+test("a query's timeout starts at its turn in the payment queue", async () => {
+  const ledger = new PaymentLedger();
+  const inner = payingGateway({ amount: "10000" });
+  // Every round trip takes 40 ms and honours the abort signal, as a real
+  // fetch does. A paid query is two round trips.
+  const slow = (async (input: string | URL | Request, init?: RequestInit) => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const signal = input instanceof Request ? input.signal : init?.signal;
+    if (signal?.aborted) throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    return inner.fetch(input as never, init as never);
+  }) as unknown as typeof globalThis.fetch;
+  const client = new GatewayClient({
+    baseUrl: BASE_URL,
+    timeoutMs: 150,
+    funding: new X402Funding({ signer: account, ledger, fetch: slow }),
+  });
+
+  // Four queued queries finish around 320 ms. A timer started before the
+  // queue expired for the last two while their payments were being made.
+  await Promise.all(
+    [DEPLOYMENT, OTHER, DEPLOYMENT, OTHER].map((id) => client.query(id, "{ _meta { block { number } } }")),
+  );
+  assert.equal(ledger.payments.length, 4);
+});
+
 test("a settlement that failed is not recorded as a cost", async () => {
   const ledger = new PaymentLedger();
   const gateway = payingGateway({ amount: "10000", settles: false });

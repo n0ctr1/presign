@@ -154,7 +154,8 @@ export class GatewayClient {
 
     let response: Response;
     try {
-      response = await this.#funding.fetch(this.deploymentUrl(deploymentId), {
+      const url = this.deploymentUrl(deploymentId);
+      const init: RequestInit = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -163,8 +164,16 @@ export class GatewayClient {
         body: JSON.stringify(
           variables === undefined ? { query } : { query, variables },
         ),
-        signal: AbortSignal.timeout(this.#timeoutMs),
-      });
+      };
+      // Funding that queues requests starts the timer at the request's turn;
+      // anything else gets it here.
+      response =
+        this.#funding.request !== undefined
+          ? await this.#funding.request(url, init, this.#timeoutMs)
+          : await this.#funding.fetch(url, {
+              ...init,
+              signal: AbortSignal.timeout(this.#timeoutMs),
+            });
     } catch (cause) {
       // A timeout is a freshness failure like any other: the caller must fail
       // closed rather than wait past its budget.

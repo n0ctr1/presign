@@ -21,7 +21,7 @@ export type NetworkId = string;
 export type DeploymentId = string;
 
 /** Identifier of a rule in the verdict engine. */
-export type RuleId = "R1" | "R2" | "R3";
+export type RuleId = "R1" | "R2" | "R3" | "R4";
 
 /**
  * Coarse grouping of deployments that expose a comparable data shape.

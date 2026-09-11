@@ -33,6 +33,13 @@ export {
 } from "./registry/client.js";
 
 export {
+  REGISTRY_PACKAGE,
+  RegistrySubprocess,
+  registryEnvironment,
+  type RegistrySubprocessOptions,
+} from "./registry/subprocess.js";
+
+export {
   GatewayClient,
   GatewayQueryError,
   type GatewayClientOptions,

@@ -144,6 +144,10 @@ async function main(): Promise<void> {
     forkUrl: rpc.url,
   });
 
+  // Read from the fork rather than assumed. Transactions for any other chain
+  // are refused before payment instead of simulated against this state.
+  const chainId = await simulator.chainId();
+  console.log(`  fork holds chain ${chainId}; transactions for other chains are refused`);
   /*
    * Proxy upgrade history, when a Substreams key is available.
    *
@@ -324,5 +328,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
+    chainIds: [chainId],
+    ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
 await main();
     console.log(`  settles via: ${facilitatorOverride ?? FACILITATORS[network]}`);

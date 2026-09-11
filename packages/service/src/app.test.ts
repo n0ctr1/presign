@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createApp, parseJournalMode } from "../dist/index.js";
+import { createApp, FACILITATORS, parseJournalMode } from "../dist/index.js";
 import type { PresignPipeline } from "@presign/gateway";
 import { InMemoryVerdictJournal } from "@presign/hedera";
 
@@ -43,6 +43,7 @@ const appWith = (full?: PresignPipeline) =>
     journal,
     payTo: "0.0.10398276",
     network: "hedera:testnet",
+    chainIds: [1],
     // Never reached in these assertions; kept off the public facilitators so a
     // failing test cannot depend on someone else's uptime.
     facilitatorUrl: "http://127.0.0.1:9",
@@ -144,4 +145,63 @@ test("/health names the journal topic and counts writes lost after responding", 
   // this count is the only place the loss becomes visible.
   assert.equal(health.journal.failed_async_writes, 0);
   assert.ok(typeof health.journal.topic === "string");
+});
+
+const withChain = (chainId: number) =>
+  JSON.stringify({
+    transaction: { ...(JSON.parse(body) as { transaction: object }).transaction, chainId },
+  });
+
+test("a transaction for another chain is refused before any payment is asked for", async () => {
+  const response = await appWith(pipeline("low")).request("/verdict/local", {
+    method: "POST",
+    body: withChain(8453),
+  });
+
+  /*
+   * 400, not 402. This instance forks Ethereum, and USDC on Base used to be
+   * paid for, simulated against mainnet state and returned `low`. Refusing
+   * after payment would cancel the settlement, but the caller would still have
+   * signed a payment for a request that could never be served.
+   */
+  assert.equal(response.status, 400);
+  const payload = (await response.json()) as {
+    error: string;
+    supported_chain_ids: number[];
+  };
+  assert.equal(payload.error, "unsupported_chain");
+  assert.deepEqual(payload.supported_chain_ids, [1]);
+});
+
+test("a malformed transaction is refused before payment too", async () => {
+  const response = await appWith().request("/verdict/local", {
+    method: "POST",
+    body: JSON.stringify({ transaction: { from: "0x1", data: "0x" } }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(((await response.json()) as { error: string }).error, /chainId/);
+});
+
+test("quote and health name the chains served and the facilitator that settles", async () => {
+  const app = appWith(pipeline("low"));
+  const quote = (await (await app.request("/quote")).json()) as {
+    chain_ids: number[];
+    facilitator: string;
+  };
+  const health = (await (await app.request("/health")).json()) as {
+    chain_ids: number[];
+    facilitator: string;
+  };
+
+  assert.deepEqual(quote.chain_ids, [1]);
+  assert.deepEqual(health.chain_ids, [1]);
+  assert.equal(quote.facilitator, "http://127.0.0.1:9");
+  assert.equal(health.facilitator, "http://127.0.0.1:9");
+});
+
+test("both Hedera networks settle through Blocky402", () => {
+  // Testnet has its own host, which the main host's /supported never mentions.
+  assert.equal(FACILITATORS["hedera:testnet"], "https://api.testnet.blocky402.com");
+  assert.equal(FACILITATORS["hedera:mainnet"], "https://api.blocky402.com");
 });

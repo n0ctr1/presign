@@ -43,7 +43,8 @@ export interface JournalEntry {
   readonly sources: readonly { readonly id: string; readonly lag: number }[];
   /** Rules that could not run. Their presence is why a tier may be unavailable. */
   readonly unavailable: readonly { readonly rule: string; readonly why: string }[];
-  readonly block: number;
+  /** Null when the transaction was refused before simulation. */
+  readonly block: number | null;
   readonly at: string;
 }
 

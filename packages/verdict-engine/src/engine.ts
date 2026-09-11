@@ -84,8 +84,51 @@ export class VerdictEngine {
    * refreshed in the middle would have a rule reasoning about one block using
    * evidence from another.
    */
-  evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
+  async evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
+    const refused = await this.#refuseForeignChain(transaction);
+    if (refused !== null) return refused;
     return this.#simulator.withFreshFork(() => this.#evaluate(transaction));
+  }
+
+  /**
+   * A transaction for a chain the fork does not hold is not evaluated.
+   *
+   * The fork holds one chain's state. Simulating a Base transaction against it
+   * runs the calldata against whatever lives at the same address on Ethereum —
+   * usually nothing — so the diff is empty, every rule finds nothing, and the
+   * verdict comes back `low` with a real block number attached. Green,
+   * specific-looking and about the wrong chain: the worst answer available,
+   * and what this engine returned for USDC on Base until this check existed.
+   *
+   * Every rule is named as unavailable rather than the verdict being thrown
+   * away, so a caller reading `unavailableRules` sees why nothing ran.
+   */
+  async #refuseForeignChain(transaction: UnsignedTransaction): Promise<Verdict | null> {
+    const forkChainId = await this.#simulator.chainId();
+    if (transaction.chainId === forkChainId) return null;
+
+    const detail =
+      `this instance simulates chain ${forkChainId}; the transaction is for chain ` +
+      `${transaction.chainId}, so it was not executed and no rule evaluated it`;
+    return {
+      tier: "unavailable",
+      action: TIER_ACTION.unavailable,
+      findings: [],
+      provenance: {
+        simulatedAtBlock: null,
+        chainId: transaction.chainId,
+        sources: [],
+        unavailableRules: [
+          { ruleId: "SIM", reason: "unsupported_chain", detail },
+          ...this.#rules.map((rule) => ({
+            ruleId: rule.id,
+            reason: "unsupported_chain",
+            detail,
+          })),
+        ],
+      },
+      evaluatedAt: this.#now().toISOString(),
+    };
   }
 
   async #evaluate(transaction: UnsignedTransaction): Promise<Verdict> {

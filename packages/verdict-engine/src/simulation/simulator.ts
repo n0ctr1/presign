@@ -92,6 +92,9 @@ export class ForkSimulator {
   readonly #now: () => Date;
   readonly #fetch: typeof globalThis.fetch;
 
+  /** Read once from the fork; a reset re-forks the same upstream. */
+  #chainId: Promise<number> | null = null;
+
   /** Verdicts currently reading the fork. A reset must not land among them. */
   #active = 0;
   #resetting = false;
@@ -107,6 +110,24 @@ export class ForkSimulator {
     if (this.#maxForkAgeSeconds !== null && this.#forkUrl === null) {
       throw new TypeError("maxForkAgeSeconds needs forkUrl to re-fork from");
     }
+  }
+
+  /**
+   * The chain whose state this fork holds.
+   *
+   * Asked of the fork rather than configured, so the guard that depends on it
+   * cannot be satisfied by a setting that disagrees with the state actually
+   * loaded. A failed read is not remembered: the next verdict asks again.
+   */
+  chainId(): Promise<number> {
+    if (this.#chainId === null) {
+      const pending = this.#rpc<string>("eth_chainId", []).then((raw) => Number(raw));
+      this.#chainId = pending;
+      pending.catch(() => {
+        if (this.#chainId === pending) this.#chainId = null;
+      });
+    }
+    return this.#chainId;
   }
 
   /**

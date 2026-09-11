@@ -83,6 +83,14 @@ export interface ServiceOptions {
   /** Hedera account that receives payment. */
   readonly payTo: string;
   readonly network: HederaNetwork;
+  /**
+   * Chains this instance can simulate: the fork's own, read from the fork.
+   *
+   * Required so a deployment cannot leave it out. Before it existed a
+   * transaction for any chain was accepted, paid for and simulated against
+   * Ethereum state, and USDC on Base came back `low`.
+   */
+  readonly chainIds: readonly number[];
   /** Override the facilitator, e.g. a self-hosted one. */
   readonly facilitatorUrl?: string;
   /**
@@ -189,9 +197,8 @@ export function createApp(options: ServiceOptions): Hono {
 
   const app = new Hono();
 
-  const facilitator = new HTTPFacilitatorClient({
-    url: options.facilitatorUrl ?? FACILITATORS[options.network],
-  });
+  const facilitatorUrl = options.facilitatorUrl ?? FACILITATORS[options.network];
+  const facilitator = new HTTPFacilitatorClient({ url: facilitatorUrl });
   const server = new x402ResourceServer(facilitator).register(
     "hedera:*",
     // HBAR rather than USDC: an agent that has just been funded has HBAR for
@@ -235,6 +242,8 @@ export function createApp(options: ServiceOptions): Hono {
       return c.json({
         network: options.network,
         pay_to: options.payTo,
+        chain_ids: options.chainIds,
+        facilitator: facilitatorUrl,
         asset: "HBAR",
         ...quote(rules),
         tinybars: quote(rules).tinybars.toString(),
@@ -255,6 +264,9 @@ export function createApp(options: ServiceOptions): Hono {
       ok: true,
       network: options.network,
       payTo: options.payTo,
+      facilitator: facilitatorUrl,
+      // Transactions for any other chain are refused before payment.
+      chain_ids: options.chainIds,
       rules: fullAvailable ? ["R1", "R2", "R3", "R4"] : ["R1", "R2"],
       // What this process has spent upstream since it started, so an operator
       // can see the running cost without buying a verdict to find out.
@@ -352,6 +364,42 @@ export function createApp(options: ServiceOptions): Hono {
    * the route configuration above still type-checks. An earlier version cast
    * the routes too, which hid a wrong shape until it threw at startup.
    */
+  /*
+   * Requests are validated before the payment middleware sees them.
+   *
+   * The handler used to parse the transaction only after payment had been
+   * verified, so a malformed body or an unsupported chain cost the caller a
+   * 402 round trip and a signed payment before it was refused. Nothing was
+   * settled — the middleware cancels settlement on any status of 400 or above
+   * — but an agent should not have to sign a payment to learn that its request
+   * could never be served. Hono caches the parsed body, so the handler's own
+   * parse reads the same object rather than the stream twice.
+   */
+  app.use("/verdict/*", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    try {
+      const transaction = parseTransaction((await c.req.json()) as VerdictRequestBody);
+      parseJournalMode(c.req.query("journal"));
+      if (!options.chainIds.includes(transaction.chainId)) {
+        return c.json(
+          {
+            error: "unsupported_chain",
+            message:
+              `this instance simulates chain ${options.chainIds.join(", ")} only. A ` +
+              `transaction for chain ${transaction.chainId} would be executed against ` +
+              "the wrong chain's state, so it is refused rather than evaluated. " +
+              "No payment was taken.",
+            supported_chain_ids: options.chainIds,
+          },
+          400,
+        );
+      }
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+    return next();
+  });
+
   app.use(paymentMiddleware(paidRoutes as never, server) as never);
 
   const handle =

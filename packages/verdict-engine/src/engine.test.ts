@@ -10,8 +10,9 @@ const TARGET = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 
 const tx = { from: AGENT, to: TARGET, value: 0n, data: "0x", chainId: 1 } as UnsignedTransaction;
 
-function simulator(revertReason: string | null = null) {
+function simulator(revertReason: string | null = null, chainId = 1) {
   return {
+    chainId: () => Promise.resolve(chainId),
     // The engine takes a fork lease around every verdict; a double that does
     // not offer one would pass here and fail against the real simulator.
     withFreshFork: <T>(work: () => Promise<T>) => work(),
@@ -183,6 +184,44 @@ test("a reverting transaction is reported as an observation", async () => {
   assert.ok(revert);
   // It changes nothing on success paths, so it does not raise the tier.
   assert.equal(verdict.tier, "low");
+});
+
+test("a transaction for another chain is unavailable, and nothing is simulated", async () => {
+  let simulated = false;
+  let ruleRan = false;
+  const sim = {
+    ...(simulator() as object),
+    withFreshFork: () => {
+      simulated = true;
+      return Promise.reject(new Error("must not take a fork lease"));
+    },
+  } as never;
+  const watching = {
+    id: "R1",
+    title: "R1",
+    evaluate: () => {
+      ruleRan = true;
+      return Promise.resolve({ status: "evaluated", findings: [] });
+    },
+  } as never as Rule;
+
+  // USDC on Base, sent to an engine whose fork holds Ethereum. Before the
+  // guard this simulated against mainnet state and came back `low`.
+  const verdict = await engine([watching], sim).evaluate({ ...tx, chainId: 8453 });
+
+  assert.equal(verdict.tier, "unavailable");
+  assert.equal(simulated, false);
+  assert.equal(ruleRan, false);
+  assert.equal(verdict.provenance.simulatedAtBlock, null);
+  assert.equal(verdict.provenance.chainId, 8453);
+  assert.deepEqual(
+    verdict.provenance.unavailableRules.map((r) => [r.ruleId, r.reason]),
+    [
+      ["SIM", "unsupported_chain"],
+      ["R1", "unsupported_chain"],
+    ],
+  );
+  assert.match(verdict.provenance.unavailableRules[0]!.detail, /simulates chain 1/);
 });
 
 test("provenance records the simulated block and chain", async () => {

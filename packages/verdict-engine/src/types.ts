@@ -80,9 +80,15 @@ export interface Finding {
  * unless the response says otherwise.
  */
 export interface VerdictProvenance {
-  /** Block the simulation ran against. */
-  readonly simulatedAtBlock: number;
-  /** Chain the fork was taken from. */
+  /**
+   * Block the simulation ran against, or `null` when nothing was simulated.
+   *
+   * Null rather than the fork's block for a transaction that was never
+   * executed: a block number beside a Base transaction would read as evidence
+   * about that transaction, and it would be evidence about Ethereum.
+   */
+  readonly simulatedAtBlock: number | null;
+  /** Chain the transaction is for. */
   readonly chainId: number;
   /** Indexed sources consulted, with their lag at the time of use. */
   readonly sources: readonly VerdictSource[];

@@ -102,6 +102,7 @@ test("an unindexed contract deployed an hour ago is critical", async () => {
 test("this is the gap that used to return low: the engine tiers it high", async () => {
   const engine = new VerdictEngine({
     simulator: {
+      chainId: () => Promise.resolve(1),
       withFreshFork: <T>(work: () => Promise<T>) => work(),
       simulate: () =>
         Promise.resolve({ pre: {}, post: {}, blockNumber: 25916120, revertReason: null }),

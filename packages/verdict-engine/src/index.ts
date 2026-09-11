@@ -66,7 +66,9 @@ export {
 
 export {
   CHAIN_TO_NETWORK,
+  confirmedFactory,
   InvariantBreachRule,
+  type ConfirmedFactory,
   type InvariantBreachRuleOptions,
   type ProbeOutcome,
   type ProtocolContext,

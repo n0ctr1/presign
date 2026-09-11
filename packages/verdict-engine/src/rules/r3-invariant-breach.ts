@@ -33,11 +33,85 @@ import { evaluated } from "../types.js";
 import type {
   Address,
   Finding,
+  Hex,
   Rule,
   RuleContext,
   RuleOutcome,
   VerdictSource,
 } from "../types.js";
+
+const SELECTOR = {
+  factory: "0xc45a0155",
+  token0: "0x0dfe1681",
+  token1: "0xd21220a7",
+  fee: "0xddca3f43",
+  /** `getPool(address,address,uint24)`, the Uniswap V3 shape. */
+  getPool: "0x1698ee82",
+  /** `getPair(address,address)`, the Uniswap V2 shape. */
+  getPair: "0xe6a43905",
+} as const;
+
+const WORD = /^0x[0-9a-fA-F]{64}$/;
+
+/** An ABI-encoded address, or null for anything else including zero. */
+function addressOf(word: Hex | null): Address | null {
+  if (word === null || !WORD.test(word) || !/^0x0{24}/.test(word)) return null;
+  const address = `0x${word.slice(26)}`.toLowerCase() as Address;
+  return /^0x0{40}$/.test(address) ? null : address;
+}
+
+export interface ConfirmedFactory {
+  readonly factory: Address;
+  readonly confirmedBy: "getPool" | "getPair";
+}
+
+/**
+ * The factory that created a pool, when the factory itself vouches for it.
+ *
+ * DEX subgraphs index pools through templates: the manifest names the factory,
+ * and each pool it creates becomes a data source at runtime. Asking the
+ * registry which deployments index a pool's *address* therefore finds almost
+ * nothing — only subgraphs that happen to list that pool statically. For the
+ * Uniswap V3 USDC/WETH pool the address lookup returned two deployments that do
+ * not speak the schema and one whose only indexer was down, and R3 refused,
+ * correctly: a conforming deployment might have been behind the failure. One
+ * was, reachable through the factory and six seconds behind head.
+ *
+ * `factory()` alone proves nothing, since any contract can return Uniswap's
+ * factory address to borrow its standing. So the claim is checked from the
+ * other side: the factory is asked for the pool at this pool's own tokens and
+ * fee tier, and must answer with this address. A contract that lies about its
+ * factory fails that and is left to the address lookup alone.
+ */
+export async function confirmedFactory(
+  pool: Address,
+  call: RuleContext["call"],
+): Promise<ConfirmedFactory | null> {
+  const factory = addressOf(await call(pool, SELECTOR.factory));
+  if (factory === null) return null;
+
+  const [rawToken0, rawToken1, fee] = await Promise.all([
+    call(pool, SELECTOR.token0),
+    call(pool, SELECTOR.token1),
+    call(pool, SELECTOR.fee),
+  ]);
+  const token0 = addressOf(rawToken0);
+  const token1 = addressOf(rawToken1);
+  if (token0 === null || token1 === null) return null;
+
+  const pad = (address: Address) => address.slice(2).padStart(64, "0");
+  const v3 = fee !== null && WORD.test(fee);
+  const answer = addressOf(
+    await call(
+      factory,
+      (v3
+        ? `${SELECTOR.getPool}${pad(token0)}${pad(token1)}${fee.slice(2)}`
+        : `${SELECTOR.getPair}${pad(token0)}${pad(token1)}`) as Hex,
+    ),
+  );
+  if (answer !== pool.toLowerCase()) return null;
+  return { factory, confirmedBy: v3 ? "getPool" : "getPair" };
+}
 
 /** EIP-155 chain id to the graph-node network name the corpus is keyed by. */
 export const CHAIN_TO_NETWORK: Readonly<Record<number, NetworkId>> = {
@@ -331,13 +405,32 @@ export class InvariantBreachRule implements Rule {
      * a conforming deployment that is stale is a protocol we should be able to
      * check and currently cannot, which is the fail-closed case.
      */
-    const indexing = await this.#protocol.findIndexingDeployments(target, network);
+    const direct = await this.#protocol.findIndexingDeployments(target, network);
 
-    const specced = indexing.flatMap((candidate) => {
+    /*
+     * Deployments that index the counterparty through the factory that made
+     * it. These are asked about this one entity by id, never for a sample of
+     * the protocol, because they index every pool the factory ever created and
+     * the verdict is about this pool.
+     */
+    const resolved = await confirmedFactory(target, context.call);
+    const viaFactory =
+      resolved === null
+        ? []
+        : (await this.#protocol.findIndexingDeployments(resolved.factory, network)).filter(
+            (candidate) => !direct.some((d) => d.deploymentId === candidate.deploymentId),
+          );
+
+    const indexing = [
+      ...direct.map((candidate) => ({ candidate, entity: null as Address | null })),
+      ...viaFactory.map((candidate) => ({ candidate, entity: target as Address | null })),
+    ];
+
+    const specced = indexing.flatMap(({ candidate, entity }) => {
       const family = candidate.schemaFamily;
       if (family === null) return [];
       const spec = SPECS[family];
-      return spec === undefined ? [] : [{ candidate, spec, family }];
+      return spec === undefined ? [] : [{ candidate, spec, family, entity }];
     });
 
     if (specced.length === 0) return evaluated([]);
@@ -443,17 +536,39 @@ export class InvariantBreachRule implements Rule {
 
     for (const candidate of fresh) {
       const requirementFor = this.#requirementFor(candidate.spec);
-      const text = `{ ${requirementFor.rootField}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${candidate.spec.fields.join(" ")} } }`;
+      const root = requirementFor.rootField;
+      // `liquidityPools` → `liquidityPool`: the standard schemas pair every
+      // collection with a singular lookup by id.
+      const single = root.endsWith("s") ? root.slice(0, -1) : root;
+      const fields = candidate.spec.fields.join(" ");
+      const text =
+        candidate.entity === null
+          ? `{ ${root}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${fields} } }`
+          : `{ ${single}(id: "${candidate.entity}") { ${fields} } }`;
       try {
         const data = await this.#protocol.query<Record<string, unknown>>(
           candidate.record.candidate.deploymentId,
           text,
         );
-        const rows = data[requirementFor.rootField];
-        answered = {
-          entry: candidate,
-          entities: Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [],
-        };
+        if (candidate.entity === null) {
+          const rows = data[root];
+          answered = {
+            entry: candidate,
+            entities: Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [],
+          };
+          break;
+        }
+        const row = data[single];
+        if (row === null || typeof row !== "object") {
+          // Fresh and conforming, but it has not indexed this pool — a pool
+          // created after its head block, or one it filters out. That is not a
+          // pool with sound accounting, so the next candidate is asked.
+          attempts.push(
+            `${candidate.record.candidate.displayName}: holds no ${single} ${candidate.entity}`,
+          );
+          continue;
+        }
+        answered = { entry: candidate, entities: [row as Record<string, unknown>] };
         break;
       } catch (error) {
         attempts.push(
@@ -502,6 +617,14 @@ export class InvariantBreachRule implements Rule {
             deployment_name: record.candidate.displayName,
             effective_lag_seconds: lagSeconds,
             indexed_block: record.liveness.indexedBlock,
+            ...(chosen.entity === null || resolved === null
+              ? {}
+              : {
+                  resolved_via: {
+                    factory: resolved.factory,
+                    confirmed_by: resolved.confirmedBy,
+                  },
+                }),
             derived_from: "indexed_protocol_data",
           },
         });

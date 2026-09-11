@@ -63,6 +63,32 @@ const pending = (step: string) => ({
   intermediateValue: { step, requiredUserInteraction: "sign-transaction" },
 });
 
+test("reads the device address without asking the human to confirm it", async () => {
+  let asked: { checkOnDevice?: boolean } | undefined;
+  const signer = {
+    ...scriptedSigner([]),
+    getAddress: (_path: string, options?: { checkOnDevice?: boolean }) => {
+      asked = options;
+      return {
+        observable: {
+          subscribe(handlers: { next: (state: Record<string, unknown>) => void }) {
+            queueMicrotask(() =>
+              handlers.next({ status: "completed", output: { address: AGENT, publicKey: "0x04" } }),
+            );
+            return { unsubscribe() {} };
+          },
+        },
+        cancel() {},
+      };
+    },
+  } as unknown as TransactionSigner;
+
+  // A broker checking that a device signature came from this device needs the
+  // address; a prompt to confirm an address nobody chose decides nothing.
+  assert.equal(await confirmation(signer).address(), AGENT);
+  assert.equal(asked?.checkOnDevice, false);
+});
+
 test("refuses to present a high-risk transaction to the device", async () => {
   let called = false;
   const signer = {
@@ -142,6 +168,26 @@ test("the blind-signing *check* is not mistaken for the fallback", async () => {
 
   assert.ok(result.approved);
   assert.equal(result.clearSigned, true);
+});
+
+test("clear signing is claimed on evidence, not on the absence of a fallback", async () => {
+  // No intermediate states at all: nothing shows the device decoded anything.
+  const silent = await confirmation(
+    scriptedSigner([{ status: "completed", output: SIGNATURE }]),
+  ).request(transaction, verdict("medium"));
+  assert.ok(silent.approved);
+  assert.equal(silent.clearSigned, false);
+
+  // A fallback step under a name a future signer release might use.
+  const renamed = await confirmation(
+    scriptedSigner([
+      pending("signer.eth.steps.signTransaction"),
+      pending("signer.eth.steps.blindSigningFallback"),
+      { status: "completed", output: SIGNATURE },
+    ]),
+  ).request(transaction, verdict("medium"));
+  assert.ok(renamed.approved);
+  assert.equal(renamed.clearSigned, false);
 });
 
 test("a stopped action is not reported as a human decision", async () => {

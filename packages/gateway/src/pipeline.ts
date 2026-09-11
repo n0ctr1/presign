@@ -48,16 +48,11 @@ export interface ConfirmationRequester {
 export type PipelineDecision =
   /** Low risk. The agent proceeds with its own key. */
   | { readonly decision: "may_sign"; readonly verdict: Verdict }
-  /** Medium risk, confirmed on a device, signature returned. */
+  /** Medium risk, confirmed on a device that decoded it, signature returned. */
   | {
       readonly decision: "signed_after_confirmation";
       readonly verdict: Verdict;
       readonly signature: Signature;
-      /**
-       * False when the device fell back to blind signing, meaning the human
-       * approved a hash rather than a decoded transaction.
-       */
-      readonly clearSigned: boolean;
     }
   /** Medium risk, but no device is configured. Not a failure. */
   | { readonly decision: "escalation_required"; readonly verdict: Verdict }
@@ -94,13 +89,15 @@ export function describe(outcome: PipelineDecision): string {
     case "may_sign":
       return `${tier} — agent may sign`;
     case "signed_after_confirmation":
-      return `${tier} — confirmed on device${outcome.clearSigned ? "" : " (BLIND SIGNED)"}`;
+      return `${tier} — confirmed on device`;
     case "escalation_required":
       return `${tier} — human confirmation required, no device configured`;
     case "declined_by_human":
       return `${tier} — declined by human`;
     case "escalation_failed":
-      return `${tier} — could not reach the device: ${outcome.reason}`;
+      return outcome.reason === "blind_signed"
+        ? `${tier} — BLIND SIGNED on device, signature discarded`
+        : `${tier} — could not reach the device: ${outcome.reason}`;
     case "refused":
       return `${tier} — refused`;
   }
@@ -159,12 +156,24 @@ export class PresignPipeline {
     const result = await this.#confirmation.request(signable, verdict);
 
     if (result.approved) {
-      return {
-        decision: "signed_after_confirmation",
-        verdict,
-        signature: result.signature,
-        clearSigned: result.clearSigned,
-      };
+      /*
+       * A blind signature is not a confirmation. The human approved a hash the
+       * device could not decode, so what they agreed to is unknown, and handing
+       * the signature on would present a medium-risk transaction as checked by
+       * a person when nobody saw it. It is dropped here rather than flagged
+       * for a caller to remember to check.
+       */
+      if (!result.clearSigned) {
+        return {
+          decision: "escalation_failed",
+          verdict,
+          reason: "blind_signed",
+          detail:
+            "The device fell back to blind signing, so the human approved a hash rather " +
+            "than the decoded transaction. The signature was discarded.",
+        };
+      }
+      return { decision: "signed_after_confirmation", verdict, signature: result.signature };
     }
 
     if (result.reason === "rejected_on_device") {

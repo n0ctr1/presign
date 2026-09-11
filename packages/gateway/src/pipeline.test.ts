@@ -102,14 +102,14 @@ test("a medium verdict confirmed on the device returns the signature", async () 
   assert.equal(outcome.decision, "signed_after_confirmation");
   assert.ok(outcome.decision === "signed_after_confirmation");
   assert.deepEqual(outcome.signature, SIGNATURE);
-  assert.equal(outcome.clearSigned, true);
 });
 
-test("a blind-signed confirmation is carried through, not hidden", async () => {
+test("a blind signature is not a confirmation, and is not handed on", async () => {
   const outcome = await pipeline("medium", approving(false)).run(tx);
 
-  assert.ok(outcome.decision === "signed_after_confirmation");
-  assert.equal(outcome.clearSigned, false);
+  assert.ok(outcome.decision === "escalation_failed");
+  assert.equal(outcome.reason, "blind_signed");
+  assert.ok(!("signature" in outcome));
   assert.match(describeOutcome(outcome), /BLIND SIGNED/);
 });
 

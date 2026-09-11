@@ -76,6 +76,16 @@ export type ConfirmationResult =
  */
 const BLIND_SIGN_FALLBACK_STEP = "signer.eth.steps.blindSignTransactionFallback";
 
+/**
+ * The step a decoded signature passes through, recorded from a Nano X.
+ *
+ * Clear signing is claimed only on evidence of it. Reading "no fallback step
+ * seen" as clear signing would call a signature clear whenever the step is
+ * renamed in a new signer release, or whenever no intermediate states arrive
+ * at all — a detector that fails open on exactly the change nobody announces.
+ */
+const SIGN_TRANSACTION_STEP = "signer.eth.steps.signTransaction";
+
 /** Default BIP-44 path for the first Ethereum account. */
 export const DEFAULT_DERIVATION_PATH = "44'/60'/0'/0/0";
 
@@ -84,6 +94,19 @@ export interface TransactionSigner {
   signTransaction(
     derivationPath: string,
     transaction: Uint8Array,
+  ): {
+    observable: {
+      subscribe(handlers: {
+        next: (state: Record<string, unknown>) => void;
+        error: (error: unknown) => void;
+      }): { unsubscribe(): void };
+    };
+    cancel: () => void;
+  };
+  /** Read the address at a path. Optional so older test doubles still fit. */
+  getAddress?(
+    derivationPath: string,
+    options?: { checkOnDevice?: boolean },
   ): {
     observable: {
       subscribe(handlers: {
@@ -130,6 +153,60 @@ export class DeviceConfirmation {
     this.#derivationPath = options.derivationPath ?? DEFAULT_DERIVATION_PATH;
     this.#timeoutMs = options.timeoutMs ?? 120_000;
     this.#onProgress = options.onProgress;
+  }
+
+  /**
+   * The address this confirmation signs with, read without a prompt.
+   *
+   * A caller that treats a device signature as a human's approval has to
+   * check the signature came from this device's key over the exact bytes it
+   * meant to approve. That check needs the address, and asking the human to
+   * confirm an address they did not choose would be a prompt with nothing to
+   * decide.
+   */
+  address(): Promise<string> {
+    const signer = this.#signerFactory(this.#device);
+    if (signer.getAddress === undefined) {
+      return Promise.reject(new Error("this signer cannot read addresses"));
+    }
+    const action = signer.getAddress(this.#derivationPath, { checkOnDevice: false });
+
+    return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        subscription.unsubscribe();
+        fn();
+      };
+      const timer = setTimeout(() => {
+        action.cancel();
+        finish(() => reject(new Error("no address from the device within 30s")));
+      }, 30_000);
+      const subscription = action.observable.subscribe({
+        next: (state) => {
+          if (state["status"] === DeviceActionStatus.Completed) {
+            const output = state["output"] as { address?: string };
+            finish(() =>
+              typeof output?.address === "string"
+                ? resolve(output.address)
+                : reject(new Error("the device returned no address")),
+            );
+          } else if (
+            state["status"] === DeviceActionStatus.Error ||
+            state["status"] === DeviceActionStatus.Stopped
+          ) {
+            const error = state["error"] as { message?: string } | undefined;
+            finish(() =>
+              reject(new Error(error?.message ?? "the device could not read an address")),
+            );
+          }
+        },
+        error: (error) =>
+          finish(() => reject(error instanceof Error ? error : new Error(String(error)))),
+      });
+    });
   }
 
   /**
@@ -222,9 +299,12 @@ export class DeviceConfirmation {
             finish({
               approved: true,
               signature: output,
-              // If the fallback step appears, the human approved a hash
-              // rather than a decoded transaction.
-              clearSigned: !steps.includes(BLIND_SIGN_FALLBACK_STEP),
+              // If a fallback step appears, the human approved a hash rather
+              // than a decoded transaction; if the signing step never did,
+              // nothing shows the device decoded anything.
+              clearSigned:
+                steps.includes(SIGN_TRANSACTION_STEP) &&
+                !steps.some((step) => step === BLIND_SIGN_FALLBACK_STEP || /fallback/i.test(step)),
               steps,
             });
             return;

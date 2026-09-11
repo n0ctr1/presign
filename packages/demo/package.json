@@ -19,7 +19,7 @@
     "coverage": "tsc -b && node dist/coverage.js"
   },
   "dependencies": {
-    "@hono/node-server": "1.19.6",
+    "@hono/node-server": "1.19.17",
     "@presign/gateway": "0.0.1",
     "@presign/hedera": "0.0.1",
     "@presign/ledger": "0.0.1",

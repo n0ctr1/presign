@@ -42,6 +42,16 @@ export {
 } from "./rules/r1-unlimited-approval.js";
 
 export {
+  SCAM_SNIFFER_ADDRESS_LIST,
+  ScamSnifferIncidentFeed,
+  StaticIncidentRegistry,
+  toIncidentRegistry,
+  type IncidentRegistry,
+  type IncidentRegistryStatus,
+  type ScamSnifferFeedOptions,
+} from "./incidents/incident-registry.js";
+
+export {
   eip1967Slot,
   EIP1967_ADMIN_SLOT,
   EIP1967_BEACON_SLOT,

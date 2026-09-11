@@ -27,7 +27,13 @@ import { runTwoSided } from "./two-sided.js";
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const AAVE_V3_POOL = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2";
 const AGENT = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
-const FLAGGED_SPENDER = "0x00000000000000000000000000000000deadbeef";
+/**
+ * An address on ScamSniffer's public blacklist, checked against the list at
+ * run time rather than trusted from this line.
+ */
+const FLAGGED_SPENDER = "0x43412801d29861ecc4c4d86e5becfd16af86a67b";
+/** Uniswap's Permit2: an ordinary spender no list has reason to name. */
+const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 
 const approve = (spender: string, amountHex: string): UnsignedTransaction => ({
   from: AGENT as never,
@@ -73,7 +79,11 @@ async function scenario(
     console.log(`  [${finding.severity}] ${finding.ruleId}: ${finding.title}`);
   }
   const { sources, unavailableRules, simulatedAtBlock } = outcome.verdict.provenance;
-  console.log(`  provenance: simulated at block ${simulatedAtBlock}`);
+  console.log(
+    simulatedAtBlock === null
+      ? "  provenance: not simulated"
+      : `  provenance: simulated at block ${simulatedAtBlock}`,
+  );
   for (const source of sources) {
     console.log(
       `    source ${source.displayName} (${source.deploymentId.slice(0, 12)}\u2026) lag ${source.effectiveLagSeconds}s`,
@@ -127,17 +137,21 @@ async function main(): Promise<void> {
 
   try {
     await scenario(
-      "1. Unlimited USDC approval to a spender in the incident registry",
-      "   Expect: refused, without ever reaching the device.",
+      "1. Unlimited USDC approval to an address on ScamSniffer's blacklist",
+      wiring.incidents.has(FLAGGED_SPENDER)
+        ? `   ${FLAGGED_SPENDER} is on the list as fetched just now.\n` +
+            "   Expect: refused, without ever reaching the device."
+        : `   ${FLAGGED_SPENDER} is NOT on the list as fetched (or the list did not load),\n` +
+            "   so expect medium rather than high: R1 escalates only what the list names.",
       () => pipeline.run(approve(FLAGGED_SPENDER, "f".repeat(64))),
     );
 
     const bounded = approve(
-      FLAGGED_SPENDER,
+      PERMIT2,
       (1000n * 10n ** 6n).toString(16).padStart(64, "0"),
     );
     await scenario(
-      "2. Bounded approval (1000 USDC) to the same spender",
+      "2. Bounded approval (1000 USDC) to Permit2, an ordinary spender",
       useDevice
         ? "   Expect: medium \u2014 LOOK AT THE LEDGER and approve or reject."
         : "   Expect: medium \u2014 human confirmation required (run with --device to try it).",
@@ -198,6 +212,7 @@ async function main(): Promise<void> {
         engine: wiring.engine,
         localEngine: wiring.localEngine,
         ledger: wiring.ledger,
+        chainIds: [wiring.chainId],
         secret: async (name) => {
           try {
             return (

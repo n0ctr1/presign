@@ -43,6 +43,8 @@ export interface TwoSidedOptions {
   readonly localEngine: VerdictEngine;
   /** Records what queries cost upstream. Only non-empty on the paid path. */
   readonly ledger: PaymentLedger;
+  /** Chains the fork can simulate; anything else is refused before payment. */
+  readonly chainIds: readonly number[];
   /** Reads a secret by file name, or null when it is absent. */
   readonly secret: (name: string) => Promise<string | null>;
   /** The transaction the agent wants judged before signing it. */
@@ -103,6 +105,7 @@ export async function runTwoSided(options: TwoSidedOptions): Promise<void> {
     journal,
     payTo: serviceId,
     network,
+    chainIds: options.chainIds,
   });
 
   /*

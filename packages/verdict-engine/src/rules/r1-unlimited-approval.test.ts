@@ -166,6 +166,64 @@ test("escalates to critical for a spender in the incident registry", async () =>
   assert.match(String(findings[0]?.title), /known incident/i);
 });
 
+test("a bounded approval to a flagged spender is still critical", async () => {
+  const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
+  const thousandUsdc = `0x${(1000n * 10n ** 6n).toString(16).padStart(64, "0")}`;
+  const rule = new UnlimitedApprovalRule({ incidentRegistry: [SPENDER as never] });
+
+  const findings = await findingsOf(
+    rule,
+    context(transaction(), diffWriting(slot, thousandUsdc)),
+  );
+
+  // The limit caps what a drainer can take; it does not make the approval
+  // reasonable. The same amount to an unlisted spender is ignored above.
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.severity, "critical");
+  assert.match(String(findings[0]?.title), /^Approval to an address linked/);
+});
+
+test("a revocation to a flagged spender is not reported", async () => {
+  const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
+  const rule = new UnlimitedApprovalRule({ incidentRegistry: [SPENDER as never] });
+
+  assert.deepEqual(
+    await findingsOf(rule, context(transaction(), diffWriting(slot, `0x${"0".repeat(64)}`))),
+    [],
+  );
+});
+
+test("a flagged finding names the list and when it was fetched", async () => {
+  const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
+  const registry = {
+    has: (address: string) => address.toLowerCase() === SPENDER,
+    status: () => ({
+      source: "ScamSniffer scam-database",
+      url: "https://example.invalid/address.json",
+      loaded: true,
+      entries: 2530,
+      fetchedAt: "2026-09-11T00:00:00.000Z",
+      lastError: null,
+      note: "",
+    }),
+  };
+
+  const findings = await findingsOf(
+    new UnlimitedApprovalRule({ incidentRegistry: registry }),
+    context(transaction(), diffWriting(slot, MAX)),
+  );
+
+  // "In the incident registry" is a claim a reader cannot check. Which list,
+  // how large and as of when is one they can.
+  assert.deepEqual(findings[0]?.evidence["incident_registry"], {
+    source: "ScamSniffer scam-database",
+    url: "https://example.invalid/address.json",
+    entries: 2530,
+    fetched_at: "2026-09-11T00:00:00.000Z",
+  });
+  assert.match(String(findings[0]?.title), /known incident/);
+});
+
 test("flags a very large approval that is not exactly max", async () => {
   const slot = allowanceSlot(OWNER, SPENDER, USDC_ALLOWANCE_MAPPING_SLOT);
   const huge = `0x${(2n ** 200n).toString(16).padStart(64, "0")}`;

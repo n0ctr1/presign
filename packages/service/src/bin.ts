@@ -35,6 +35,7 @@ import {
   InvariantBreachRule,
   RpcContractOrigin,
   MutableLogicRule,
+  ScamSnifferIncidentFeed,
   OperationalProtocolContext,
   resolveEthereumRpc,
   UnidentifiedCounterpartyRule,
@@ -143,11 +144,11 @@ async function main(): Promise<void> {
     maxForkAgeSeconds: Number(process.env["MAX_FORK_AGE_SECONDS"] ?? 60),
     forkUrl: rpc.url,
   });
-
   // Read from the fork rather than assumed. Transactions for any other chain
   // are refused before payment instead of simulated against this state.
   const chainId = await simulator.chainId();
   console.log(`  fork holds chain ${chainId}; transactions for other chains are refused`);
+
   /*
    * Proxy upgrade history, when a Substreams key is available.
    *
@@ -196,8 +197,29 @@ async function main(): Promise<void> {
   const ledger = new PaymentLedger();
   let usingX402 = false;
 
+  /*
+   * The list R1 escalates against: ScamSniffer's open address blacklist.
+   *
+   * Loaded before listening, so the first verdict does not run against an
+   * empty list, then refreshed every six hours. A failed load is logged and
+   * shown on /health but does not stop the service: a denylist only ever
+   * raises a verdict, so running without one loses escalations and never
+   * turns anything green.
+   */
+  const incidents = new ScamSnifferIncidentFeed();
+  await incidents.refresh();
+  incidents.start();
+  {
+    const feed = incidents.status();
+    console.log(
+      feed.loaded
+        ? `  incident registry: ${feed.entries} addresses from ${feed.source}`
+        : `  incident registry NOT loaded (${feed.lastError}); R1 cannot escalate listed spenders`,
+    );
+  }
+
   const rules = () => [
-    new UnlimitedApprovalRule(),
+    new UnlimitedApprovalRule({ incidentRegistry: incidents }),
     new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
   ];
   const local = new PresignPipeline({
@@ -279,25 +301,35 @@ async function main(): Promise<void> {
     );
   }
 
+  // Blocky402 by default for both networks; overridable for a self-hosted one.
+  const facilitatorOverride = process.env["FACILITATOR_URL"];
+
   const app = createApp({
     ...(usingX402 ? { ledger } : {}),
     pipelines: full === undefined ? { local } : { local, full },
-    sources: () =>
-      upgrades === undefined
-        ? []
-        : [
-            {
-              name: "proxy-upgrade-stream",
-              live: upgrades.live,
-              detail: {
-                ...upgrades.stats,
-                ...(upgrades.failure === null ? {} : { failure: upgrades.failure }),
+    sources: () => {
+      const { loaded, ...feed } = incidents.status();
+      return [
+        { name: "incident-registry", live: loaded, detail: feed },
+        ...(upgrades === undefined
+          ? []
+          : [
+              {
+                name: "proxy-upgrade-stream",
+                live: upgrades.live,
+                detail: {
+                  ...upgrades.stats,
+                  ...(upgrades.failure === null ? {} : { failure: upgrades.failure }),
+                },
               },
-            },
-          ],
+            ]),
+      ];
+    },
     journal,
     payTo: operatorId,
     network,
+    chainIds: [chainId],
+    ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
   });
 
   serve({ fetch: app.fetch, port, hostname: host }, (info) => {
@@ -305,12 +337,10 @@ async function main(): Promise<void> {
       info.address === "::" || info.address === "0.0.0.0"
         ? "all interfaces"
         : info.address;
-  // Blocky402 by default for both networks; overridable for a self-hosted one.
-  const facilitatorOverride = process.env["FACILITATOR_URL"];
-
     console.log(`\npresign service listening on port ${info.port} (${reachable})`);
     console.log(`  network:     ${network}`);
     console.log(`  pay to:      ${operatorId}`);
+    console.log(`  settles via: ${facilitatorOverride ?? FACILITATORS[network]}`);
     console.log(`  quote:       GET  /quote`);
     console.log(
       `  paid routes: POST /verdict/local${full === undefined ? "" : ", POST /verdict/full"}`,
@@ -319,6 +349,7 @@ async function main(): Promise<void> {
 
   const shutdown = () => {
     upgrades?.stop();
+    incidents.stop();
     closeRegistry?.();
     fork.stop();
     journal.close();
@@ -328,7 +359,4 @@ async function main(): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
-    chainIds: [chainId],
-    ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
 await main();
-    console.log(`  settles via: ${facilitatorOverride ?? FACILITATORS[network]}`);

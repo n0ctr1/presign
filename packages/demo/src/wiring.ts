@@ -35,9 +35,11 @@ import {
   OperationalProtocolContext,
   resolveEthereumRpc,
   RpcContractOrigin,
+  ScamSnifferIncidentFeed,
   UnidentifiedCounterpartyRule,
   UnlimitedApprovalRule,
   VerdictEngine,
+  type IncidentRegistry,
 } from "@presign/verdict-engine";
 
 
@@ -47,6 +49,10 @@ export interface Wiring {
   /** R1 and R2 only: what `/verdict/local` is priced for. */
   readonly localEngine: VerdictEngine;
   readonly forkBlock: number;
+  /** The chain the fork holds, read from it. */
+  readonly chainId: number;
+  /** What R1 escalates against. */
+  readonly incidents: IncidentRegistry;
   /**
    * Finds a contract deployed shortly before the fork block.
    *
@@ -155,6 +161,7 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
     data: "0x",
     chainId: 1,
   })).blockNumber;
+  const chainId = await simulator.chainId();
 
   /*
    * Proxy upgrade history, started in the background when a key is present.
@@ -187,12 +194,19 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
    * while running everything — is just as dishonest, and the split makes both
    * impossible here.
    */
+  // The same maintained list the service uses. The demo once passed R1 a
+  // made-up `0x…deadbeef`, which made its one `high` approval a staged one.
+  const incidents = new ScamSnifferIncidentFeed();
+  await incidents.refresh();
+  const feed = incidents.status();
+  console.log(
+    feed.loaded
+      ? `Incident registry: ${feed.entries} addresses from ${feed.source}`
+      : `Incident registry: NOT loaded (${feed.lastError})`,
+  );
+
   const localRules = () => [
-    // The spender used by the high-risk scenario, standing in for an incident
-    // registry entry.
-    new UnlimitedApprovalRule({
-      incidentRegistry: ["0x00000000000000000000000000000000deadbeef"],
-    }),
+    new UnlimitedApprovalRule({ incidentRegistry: incidents }),
     new MutableLogicRule(upgrades === undefined ? {} : { upgradeHistory: upgrades }),
   ];
 
@@ -252,6 +266,8 @@ export async function buildWiring(strictLagSeconds = 1): Promise<Wiring> {
       rules: rules(strictLagSeconds),
     }),
     forkBlock,
+    chainId,
+    incidents,
     close: () => {
       upgrades?.stop();
       registry.close();

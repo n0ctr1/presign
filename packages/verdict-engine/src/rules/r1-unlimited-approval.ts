@@ -23,6 +23,10 @@ import { concat, keccak256, pad, toHex, type Address, type Hex } from "viem";
 
 import { evaluated } from "../types.js";
 import type { Finding, Rule, RuleContext, RuleOutcome } from "../types.js";
+import {
+  toIncidentRegistry,
+  type IncidentRegistry,
+} from "../incidents/incident-registry.js";
 
 /**
  * Above this, an allowance cannot be a considered budget.
@@ -40,8 +44,11 @@ const DEFAULT_MAX_MAPPING_SLOT = 32;
 export interface UnlimitedApprovalRuleOptions {
   /** Spenders a caller has decided are acceptable, lowercased. */
   readonly allowlist?: Iterable<Address>;
-  /** Spenders known to be involved in incidents, lowercased. */
-  readonly incidentRegistry?: Iterable<Address>;
+  /**
+   * Spenders known to be involved in incidents: a maintained feed such as
+   * {@link ScamSnifferIncidentFeed}, or a plain list of addresses.
+   */
+  readonly incidentRegistry?: Iterable<Address> | IncidentRegistry;
   readonly maxMappingSlot?: number;
 }
 
@@ -84,16 +91,14 @@ export class UnlimitedApprovalRule implements Rule {
   readonly title = "Unlimited token approval";
 
   readonly #allowlist: ReadonlySet<string>;
-  readonly #incidents: ReadonlySet<string>;
+  readonly #incidents: IncidentRegistry;
   readonly #maxMappingSlot: number;
 
   constructor(options: UnlimitedApprovalRuleOptions = {}) {
     this.#allowlist = new Set(
       [...(options.allowlist ?? [])].map((a) => a.toLowerCase()),
     );
-    this.#incidents = new Set(
-      [...(options.incidentRegistry ?? [])].map((a) => a.toLowerCase()),
-    );
+    this.#incidents = toIncidentRegistry(options.incidentRegistry);
     this.#maxMappingSlot = options.maxMappingSlot ?? DEFAULT_MAX_MAPPING_SLOT;
   }
 
@@ -115,16 +120,37 @@ export class UnlimitedApprovalRule implements Rule {
 
     const findings: Finding[] = [];
 
+    /*
+     * Candidates on the incident registry are checked at any amount.
+     *
+     * A bounded approval to an ordinary spender is a considered budget and
+     * not this rule's business. The same approval to an address reported for
+     * phishing is not a budget: the limit caps what it can take, it does not
+     * make handing it an allowance reasonable. Searching only the flagged
+     * candidates for sub-threshold writes keeps the ordinary case as cheap as
+     * it was.
+     */
+    const flaggedCandidates = [...spenders].filter((s) => this.#incidents.has(s));
+
     for (const [token, account] of Object.entries(diff.post)) {
       for (const [slot, rawValue] of Object.entries(account.storage ?? {})) {
         const value = BigInt(rawValue);
-        if (value < UNLIMITED_THRESHOLD) continue;
+        // Zero is a revocation, which is the opposite of a risk.
+        if (value === 0n) continue;
+        const unlimited = value >= UNLIMITED_THRESHOLD;
+        if (!unlimited && flaggedCandidates.length === 0) continue;
 
-        const match = this.#identifySpender(owner, spenders, slot as Hex);
+        const match = this.#identifySpender(
+          owner,
+          unlimited ? spenders : flaggedCandidates,
+          slot as Hex,
+        );
         if (match === null) continue;
         if (this.#allowlist.has(match.spender)) continue;
 
         const flagged = this.#incidents.has(match.spender);
+        const registry = flagged ? this.#incidents.status() : null;
+        const amount = value === 2n ** 256n - 1n ? "type(uint256).max" : value.toString();
         findings.push({
           ruleId: this.id,
           severity: flagged ? "critical" : "warning",
@@ -132,14 +158,31 @@ export class UnlimitedApprovalRule implements Rule {
           // property of the counterparty.
           standing: false,
           title: flagged
-            ? "Unlimited approval to an address linked to a known incident"
+            ? unlimited
+              ? "Unlimited approval to an address linked to a known incident"
+              : "Approval to an address linked to a known incident"
             : "Unlimited token approval to an unrecognised spender",
           detail:
             `This transaction sets allowance[${owner}][${match.spender}] on token ` +
-            `${token} to ${value === 2n ** 256n - 1n ? "type(uint256).max" : value.toString()}. ` +
-            `The spender may move the full balance at any time, indefinitely.` +
-            (flagged ? " This spender appears in the incident registry." : ""),
+            `${token} to ${amount}. ` +
+            (unlimited
+              ? "The spender may move the full balance at any time, indefinitely."
+              : "The amount caps the loss, not the risk.") +
+            (registry === null
+              ? ""
+              : ` This spender is listed by ${registry.source}` +
+                (registry.fetchedAt === null ? "." : `, as fetched at ${registry.fetchedAt}.`)),
           evidence: {
+            ...(registry === null
+              ? {}
+              : {
+                  incident_registry: {
+                    source: registry.source,
+                    url: registry.url,
+                    entries: registry.entries,
+                    fetched_at: registry.fetchedAt,
+                  },
+                }),
             token,
             owner,
             spender: match.spender,

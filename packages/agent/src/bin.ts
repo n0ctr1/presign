@@ -15,26 +15,12 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { x402Client } from "@x402/core/client";
-import { wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
-// PrivateKey comes from @x402/hedera rather than @hashgraph/sdk: the x402
-// packages build on @hiero-ledger/sdk, the renamed Hedera SDK, and the two
-// declare structurally identical but nominally distinct key types. Importing
-// from the package that will consume the key avoids the mismatch entirely.
-import { createClientHederaSigner, PrivateKey } from "@x402/hedera";
-import { ExactHederaScheme } from "@x402/hedera/exact/client";
+import { decodePaymentResponseHeader } from "@x402/fetch";
+import { createPayer, resolveKey } from "@presign/payer";
 
 const SECRETS = join(homedir(), ".presign", "secrets");
 const readSecret = async (name: string) =>
   (await readFile(join(SECRETS, name), "utf8")).trim();
-
-/** Hedera portals hand out ECDSA keys as 0x-prefixed hex; the SDK wants them bare. */
-function parseKey(raw: string): PrivateKey {
-  const hex = raw.startsWith("0x") ? raw.slice(2) : raw;
-  return /^[0-9a-fA-F]{64}$/.test(hex)
-    ? PrivateKey.fromStringECDSA(hex)
-    : PrivateKey.fromStringDer(raw);
-}
 
 const UNLIMITED = "f".repeat(64);
 const USDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -46,7 +32,11 @@ async function main(): Promise<void> {
   const short = network === "hedera:mainnet" ? "mainnet" : "testnet";
 
   const accountId = await readSecret(`hedera__${short}-agent-id`);
-  const privateKey = parseKey(await readSecret(`hedera__${short}-agent-key`));
+  const privateKey = await resolveKey(
+    await readSecret(`hedera__${short}-agent-key`),
+    accountId,
+    network,
+  );
 
   console.log(`agent ${accountId} on ${network}`);
 
@@ -54,35 +44,14 @@ async function main(): Promise<void> {
   const quote = (await (await fetch(`${base}/quote`)).json()) as Record<string, unknown>;
   console.log("\nquote:", JSON.stringify(quote["routes"], null, 1));
 
-  const signer = createClientHederaSigner(accountId, privateKey, { network });
-
   /*
-   * Spend controls, set deliberately rather than switched off.
-   *
-   * The client refuses by default to pay in anything outside its known-asset
-   * list, which on Hedera means USDC — so a request priced in native HBAR is
-   * rejected until the agent explicitly permits it. That default is the same
-   * instinct this whole project is built on: an agent should not hand over
-   * value just because something asked it to.
-   *
-   * So HBAR is allowed by name, with a hard per-payment ceiling, rather than
-   * passing `allowedAssets: true` or `spendControls: false`. A verdict costs
-   * 0.005 HBAR; a cap of 0.1 leaves room for price changes while keeping a
-   * compromised or misconfigured service from draining the account one call
-   * at a time.
+   * The paying client lives in @presign/payer, shared with the verdict MCP
+   * server, so the key resolution and the spend ceiling are written once. A
+   * one-shot agent needs no session budget; the per-payment ceiling of 0.1
+   * HBAR still keeps a compromised service from taking more than a verdict is
+   * worth, many times over, on this single call.
    */
-  const client = new x402Client()
-    .setSpendControls({
-      allowedAssets: [
-        {
-          network: network as `${string}:${string}`,
-          asset: "0.0.0",
-          maxAmountPerPayment: "10000000", // 0.1 HBAR in tinybars
-        },
-      ],
-    })
-    .register("hedera:*", new ExactHederaScheme(signer));
-  const pay = wrapFetchWithPayment(fetch, client);
+  const pay = createPayer({ accountId, privateKey, network }).fetch;
 
   // Default: approve(spender, type(uint256).max) on USDC — the thing worth
   // paying to detect. TARGET=aave asks about a lending pool instead, where R3

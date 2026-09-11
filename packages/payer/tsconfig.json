@@ -4,12 +4,6 @@
     "rootDir": "./src",
     "outDir": "./dist"
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "references": [
-    {
-      "path": "../payer"
-    }
-  ]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -1,0 +1,32 @@
+{
+  "name": "@presign/verdict-mcp",
+  "version": "0.0.1",
+  "description": "MCP server that lets a model buy a pre-signature verdict from presign, paying over x402 within a session budget.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "presign-verdict-mcp": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "SKILL.md"],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@presign/payer": "0.0.1",
+    "@presign/secrets": "0.0.1",
+    "zod": "3.25.76"
+  }
+}

@@ -25,6 +25,8 @@ COPY packages/secrets/package.json packages/secrets/
 COPY packages/service/package.json packages/service/
 COPY packages/substreams/package.json packages/substreams/
 COPY packages/verdict-engine/package.json packages/verdict-engine/
+COPY packages/payer/package.json packages/payer/
+COPY packages/verdict-mcp/package.json packages/verdict-mcp/
 RUN npm ci
 
 COPY tsconfig.base.json ./

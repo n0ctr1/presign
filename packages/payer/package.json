@@ -1,0 +1,28 @@
+{
+  "name": "@presign/payer",
+  "version": "0.0.1",
+  "description": "Pays for presign verdicts over x402 on Hedera, with a per-payment ceiling and a session budget.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -b && node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@x402/core": "2.25.0",
+    "@x402/fetch": "2.25.0",
+    "@x402/hedera": "2.25.0"
+  }
+}

@@ -24,7 +24,7 @@ export { PrivateKey };
 
 export const TINYBARS_PER_HBAR = 100_000_000n;
 
-/** 0.1 HBAR. A full verdict costs 0.005; this leaves room for a price change. */
+/** 0.1 HBAR. A metered full verdict costs at most 0.009; this leaves room for a price change. */
 export const DEFAULT_MAX_PER_PAYMENT_TINYBARS = 10_000_000n;
 
 /** A decimal HBAR amount as tinybars, without passing through floating point. */
@@ -182,17 +182,14 @@ export interface Payer {
   readonly payments: readonly Payment[];
 }
 
-/** The amount the gateway's own manifest asks for, or null if it cannot be read. */
-function amountAsked(header: string | null): bigint | null {
-  if (header === null) return null;
+/** Whether a 402 carries payment requirements that could be read at all. */
+function priceReadable(header: string | null): boolean {
+  if (header === null) return false;
   try {
-    const decoded = decodePaymentRequiredHeader(header) as {
-      accepts?: readonly { amount?: string }[];
-    };
-    const amount = decoded.accepts?.[0]?.amount;
-    return amount === undefined ? null : BigInt(amount);
+    const decoded = decodePaymentRequiredHeader(header) as { accepts?: readonly unknown[] };
+    return (decoded.accepts?.length ?? 0) > 0;
   } catch {
-    return null;
+    return false;
   }
 }
 
@@ -202,30 +199,26 @@ export function createPayer(options: PayerOptions): Payer {
   const budget = options.sessionBudgetTinybars ?? null;
   const payments: Payment[] = [];
   let spent = 0n;
-  let pending: bigint | null = null;
+  // What the current turn is about to sign, and why it refused, if it did.
+  const turn: { signing: bigint | null; refusal: BudgetExceededError | null } = {
+    signing: null,
+    refusal: null,
+  };
 
   /*
-   * The budget is checked on the inner fetch, where the 402 arrives with the
-   * price and before anything is signed. Throwing here stops the payment
-   * wrapper from ever producing a signature, so a refused payment is refused,
-   * not attempted and then regretted.
-   *
-   * A price that cannot be read is refused too when a budget is set. Paying
+   * A price that cannot be read is refused when a budget is set. Paying
    * without knowing the amount is exactly the case a budget exists to stop.
    */
   const observing: typeof globalThis.fetch = async (input, init) => {
     const response = await baseFetch(input, init);
-    if (response.status === 402) {
-      const asked = amountAsked(response.headers.get("payment-required"));
-      if (budget !== null) {
-        if (asked === null) {
-          throw new Error(
-            "the service asked for payment but its price could not be read; refusing to pay an unknown amount",
-          );
-        }
-        if (spent + asked > budget) throw new BudgetExceededError(spent, budget, asked);
-      }
-      if (asked !== null) pending = asked;
+    if (
+      response.status === 402 &&
+      budget !== null &&
+      !priceReadable(response.headers.get("payment-required"))
+    ) {
+      throw new Error(
+        "the service asked for payment but its price could not be read; refusing to pay an unknown amount",
+      );
     }
     return response;
   };
@@ -244,7 +237,35 @@ export function createPayer(options: PayerOptions): Payer {
         },
       ],
     })
-    .register("hedera:*", new ExactHederaScheme(signer));
+    .register("hedera:*", new ExactHederaScheme(signer))
+    /*
+     * The budget is checked against the requirement the client actually chose,
+     * before anything is signed.
+     *
+     * It used to read the first entry of the 402's list. The client pays the
+     * first entry it *can* pay, after dropping networks it has no scheme for
+     * and amounts past its per-payment ceiling — so a service listing a cheap
+     * option on another chain ahead of a dear one in HBAR had the cheap one
+     * checked and the dear one paid.
+     */
+    .onBeforePaymentCreation(async ({ selectedRequirements }) => {
+      const asked = BigInt(selectedRequirements.amount);
+      if (budget !== null && spent + asked > budget) {
+        turn.refusal = new BudgetExceededError(spent, budget, asked);
+        return { abort: true, reason: turn.refusal.message };
+      }
+      turn.signing = asked;
+      return undefined;
+    })
+    /*
+     * Spend is counted when the payment is signed, not when a settlement
+     * header comes back. A signed transfer can be submitted by whoever holds
+     * it, and a service that settles and then omits the header, or says it
+     * failed, must not leave the budget where it was.
+     */
+    .onAfterPaymentCreation(async () => {
+      if (turn.signing !== null) spent += turn.signing;
+    });
 
   const pay = wrapFetchWithPayment(observing, client);
 
@@ -265,20 +286,29 @@ export function createPayer(options: PayerOptions): Payer {
 
   const paying: typeof globalThis.fetch = (input, init) =>
     inTurn(async () => {
-      pending = null;
-      const response = await pay(input, init);
+      turn.signing = null;
+      turn.refusal = null;
+      let response: Response;
+      try {
+        response = await pay(input, init);
+      } catch (error) {
+        // The payment wrapper rewraps whatever the client throws. A spent
+        // budget is handed back as itself, so a caller can tell it from a fault.
+        const refusal = turn.refusal as BudgetExceededError | null;
+        throw refusal ?? error;
+      }
+      const signed = turn.signing as bigint | null;
       const header = response.headers.get("payment-response");
-      if (header !== null && pending !== null) {
+      if (header !== null && signed !== null) {
         const settled = decodePaymentResponseHeader(header) as {
           success?: boolean;
           transaction?: string;
         };
-        // Only a settled payment is spend. A refused settlement never left
-        // the wallet, and counting it would shrink the budget for nothing.
+        // The list of payments is what settled; the budget above already
+        // counted what was signed.
         if (settled.success === true) {
-          spent += pending;
           payments.push({
-            amount: pending,
+            amount: signed,
             transaction: settled.transaction ?? null,
             paidAt: new Date().toISOString(),
           });

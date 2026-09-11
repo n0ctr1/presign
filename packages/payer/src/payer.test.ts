@@ -113,6 +113,43 @@ test("a payment that would exceed the session budget is refused before it is sig
   assert.equal(payer.remaining, 400_000n);
 });
 
+test("the budget is checked against the option the client pays, not the first one listed", async () => {
+  let signedAttempts = 0;
+  const cheapElsewhere = Buffer.from(
+    JSON.stringify({
+      x402Version: 2,
+      resource: { url: "https://presign.test/verdict/full" },
+      accepts: [
+        // Listed first, on a network this payer has no scheme for.
+        { scheme: "exact", network: "eip155:8453", amount: "1", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", payTo: "0x0000000000000000000000000000000000000001", maxTimeoutSeconds: 300, extra: {} },
+        { scheme: "exact", network: "hedera:testnet", amount: "5000000", asset: "0.0.0", payTo: "0.0.10398276", maxTimeoutSeconds: 300, extra: { feePayer: "0.0.7162784" } },
+      ],
+    }),
+  ).toString("base64");
+  const gateway = (async (input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.headers.get("payment-signature") !== null) signedAttempts += 1;
+    return new Response(null, { status: 402, headers: { "payment-required": cheapElsewhere } });
+  }) as unknown as typeof globalThis.fetch;
+
+  const payer = createPayer({
+    accountId: "0.0.1",
+    privateKey: PrivateKey.generateECDSA(),
+    network: "hedera:testnet",
+    sessionBudgetTinybars: 1_000_000n,
+    fetch: gateway,
+  });
+
+  // The first entry costs one tinybar and fits; the one that would be paid
+  // costs 0.05 HBAR and does not. The second is the one that counts.
+  await assert.rejects(
+    () => payer.fetch("https://presign.test/verdict/full", { method: "POST" }),
+    (error: unknown) => error instanceof BudgetExceededError && error.asked === 5_000_000n,
+  );
+  assert.equal(signedAttempts, 0);
+  assert.equal(payer.spent, 0n);
+});
+
 test("with a budget set, an unreadable price is refused rather than paid blind", async () => {
   const gateway = (async () =>
     new Response(null, { status: 402 })) as unknown as typeof globalThis.fetch;

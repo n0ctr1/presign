@@ -10,31 +10,42 @@
  *
  * ## What is published, and what is not
  *
- * The journal records the **hash** of the transaction, never its contents.
+ * The journal records a **salted commitment** to the transaction, never its
+ * contents.
  *
  * A consensus log is public and permanent. Publishing an agent's `to`, `value`
  * and calldata would broadcast its entire strategy to anyone watching the
- * topic — and would do so for every customer at once. Hashing keeps the record
- * verifiable without turning an audit trail into a surveillance feed: anyone
- * holding the transaction can recompute the hash and confirm we said exactly
- * this, at exactly that time. Anyone who does not hold it learns nothing
- * beyond the shape of our decisions.
+ * topic — and would do so for every customer at once.
+ *
+ * A plain hash is not enough, which an earlier version got wrong. The inputs
+ * are guessable: an agent's address is public, and an approval to Permit2 or a
+ * call to the Aave pool has one calldata. Anyone could hash their guesses and
+ * learn which agent asked about what. So each entry commits to a random salt
+ * plus the transaction, and the salt goes to the caller in the response and
+ * nowhere else. Whoever holds both can recompute the commitment and confirm we
+ * said exactly this, at exactly that time. Nobody else learns anything beyond
+ * the shape of our decisions.
  *
  * The verdict itself is published in full, because a tier with no reasons is
  * not auditable, and the reasons are about the counterparty rather than about
  * the agent.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { UnsignedTransaction, Verdict } from "@presign/verdict-engine";
 
-/** What gets written to the topic. Kept small: HCS messages are billed by size. */
+/**
+ * What gets written to the topic. Kept small: HCS messages are billed by size.
+ *
+ * Version 1 entries carried `txHash`, an unsalted SHA-256 of the transaction;
+ * version 2 replaces it with `txCommitment`.
+ */
 export interface JournalEntry {
   /** Schema version, so a reader can tell how to interpret older entries. */
-  readonly v: 1;
-  /** SHA-256 over the canonical transaction fields. Never the fields. */
-  readonly txHash: string;
+  readonly v: 2;
+  /** SHA-256 over the caller's salt and the canonical transaction fields. */
+  readonly txCommitment: string;
   readonly chainId: number;
   readonly tier: Verdict["tier"];
   /** Rules that produced findings, most severe first. */
@@ -67,13 +78,26 @@ export function hashTransaction(transaction: UnsignedTransaction): string {
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
+/** A fresh salt: 128 random bits, hex. */
+export function newSalt(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/** The commitment a journal entry carries for this transaction and salt. */
+export function commitTransaction(transaction: UnsignedTransaction, salt: string): string {
+  return createHash("sha256")
+    .update(`${salt}|${hashTransaction(transaction)}`, "utf8")
+    .digest("hex");
+}
+
 export function toEntry(
   transaction: UnsignedTransaction,
   verdict: Verdict,
+  salt: string,
 ): JournalEntry {
   return {
-    v: 1,
-    txHash: hashTransaction(transaction),
+    v: 2,
+    txCommitment: commitTransaction(transaction, salt),
     chainId: transaction.chainId,
     tier: verdict.tier,
     rules: [
@@ -102,6 +126,8 @@ export interface JournalReceipt {
   readonly topicId: string;
   readonly sequenceNumber: number;
   readonly entry: JournalEntry;
+  /** The salt behind `entry.txCommitment`. Hand it to the caller, publish it nowhere. */
+  readonly salt: string;
 }
 
 export interface VerdictJournal {
@@ -113,9 +139,11 @@ export interface VerdictJournal {
    * queued *where* — a promise of a record with no address is not a record.
    */
   readonly topicId: string;
+  /** Salt defaults to a fresh one; pass it when the response must cite it before the write lands. */
   record(
     transaction: UnsignedTransaction,
     verdict: Verdict,
+    salt?: string,
   ): Promise<JournalReceipt>;
 }
 
@@ -136,14 +164,16 @@ export class InMemoryVerdictJournal implements VerdictJournal {
   record(
     transaction: UnsignedTransaction,
     verdict: Verdict,
+    salt: string = newSalt(),
   ): Promise<JournalReceipt> {
-    const entry = toEntry(transaction, verdict);
+    const entry = toEntry(transaction, verdict, salt);
     this.entries.push(entry);
     return Promise.resolve({
       consensusTimestamp: `local-${new Date().toISOString()}`,
       topicId: "local",
       sequenceNumber: ++this.#sequence,
       entry,
+      salt,
     });
   }
 }

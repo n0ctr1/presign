@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { hashTransaction, toEntry, InMemoryVerdictJournal } from "../dist/index.js";
+import {
+  commitTransaction,
+  hashTransaction,
+  newSalt,
+  toEntry,
+  InMemoryVerdictJournal,
+} from "../dist/index.js";
 import type { UnsignedTransaction, Verdict } from "@presign/verdict-engine";
+
+const SALT = "5f1d3c0e9a7b6d2c4e8f0a1b3c5d7e9f";
 
 const SPENDER = "00000000000000000000000000000000deadbeef".padStart(64, "0");
 
@@ -39,7 +47,7 @@ const verdict = {
 } as unknown as Verdict;
 
 test("the published entry never contains the transaction itself", () => {
-  const serialised = JSON.stringify(toEntry(tx, verdict));
+  const serialised = JSON.stringify(toEntry(tx, verdict, SALT));
 
   // A consensus log is public and permanent. Publishing `to`, `value` and
   // calldata would broadcast the agent's strategy to anyone watching the
@@ -80,8 +88,22 @@ test("contract creation hashes without a recipient", () => {
   assert.match(hashTransaction(creation), /^[0-9a-f]{64}$/);
 });
 
+test("the entry commits to the transaction only through the caller's salt", () => {
+  const entry = toEntry(tx, verdict, SALT);
+
+  /*
+   * An unsalted hash of a guessable transaction is a lookup, not a secret: an
+   * agent's address is public and an approval to Permit2 has one calldata.
+   * The public entry must not be matchable from the transaction alone.
+   */
+  assert.notEqual(entry.txCommitment, hashTransaction(tx));
+  assert.equal(entry.txCommitment, commitTransaction(tx, SALT));
+  assert.notEqual(commitTransaction(tx, newSalt()), entry.txCommitment);
+  assert.ok(!JSON.stringify(entry).includes(SALT));
+});
+
 test("the entry keeps what makes a verdict auditable", () => {
-  const entry = toEntry(tx, verdict);
+  const entry = toEntry(tx, verdict, SALT);
 
   assert.equal(entry.tier, "high");
   // Info findings are noise in an audit trail; the rules that fired are not.
@@ -95,7 +117,7 @@ test("the entry keeps what makes a verdict auditable", () => {
 });
 
 test("entries stay small enough for a single HCS message", () => {
-  const bytes = Buffer.byteLength(JSON.stringify(toEntry(tx, verdict)), "utf8");
+  const bytes = Buffer.byteLength(JSON.stringify(toEntry(tx, verdict, SALT)), "utf8");
 
   // HCS charges by size and chunks past ~1 KB. Staying inside one message
   // keeps a verdict to one consensus timestamp rather than several.
@@ -112,4 +134,7 @@ test("the in-memory journal keeps entries rather than discarding them", async ()
   assert.equal(journal.entries.length, 1);
   assert.equal(receipt.sequenceNumber, 1);
   assert.match(receipt.consensusTimestamp, /^local-/);
+  // The caller needs the salt to ever match this entry to its transaction.
+  assert.match(receipt.salt, /^[0-9a-f]{32}$/);
+  assert.equal(receipt.entry.txCommitment, commitTransaction(tx, receipt.salt));
 });

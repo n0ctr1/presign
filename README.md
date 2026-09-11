@@ -321,6 +321,8 @@ packages/gateway             composes verdict, escalation and confirmation
 packages/ledger              on-device confirmation, Key Ring secret source
 packages/hedera              verdict journal on the Consensus Service
 packages/service             x402-gated verdict service
+packages/payer               pays for verdicts over x402, key checks, session budget
+packages/verdict-mcp         lets a model buy a verdict as an MCP tool
 packages/agent               an agent that buys a verdict before signing
 packages/demo                runnable end-to-end demonstration
 packages/mcp-server          MCP surface + SKILL.md for other agents
@@ -359,6 +361,35 @@ fund that address with USDC on Base. No ETH is needed: payments are EIP-3009
 authorisations, submitted by the facilitator. With a payer key and no Studio
 key, the process pays automatically.
 
+### Letting a model buy the verdict
+
+Any agent that speaks HTTP and x402 can already buy a verdict. A model in an
+MCP client cannot: it has tools, not a payment client, so somebody had to write
+the x402 exchange before it could ask. `@presign/verdict-mcp` is that exchange,
+packaged as a tool.
+
+```bash
+claude mcp add presign-verdict \
+  -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX \
+  -e HEDERA_TESTNET_AGENT_KEY=<private key as the portal shows it> \
+  -- node "$PWD/packages/verdict-mcp/dist/bin.js"
+```
+
+`get_quote` and `check_service` are free; `get_verdict` pays over x402 on Hedera
+and returns the tier with `what_to_do` attached. The model spends from a session
+budget it cannot raise, checked against the price in the 402 manifest **before**
+anything is signed — a paid tool invoked in a loop otherwise empties a wallet a
+cent at a time. Verified against the live service: a model bought a verdict over
+stdio for 0.005 HBAR, settled on Hedera, and a 0.004 HBAR budget refused the
+next one with nothing paid.
+
+It is kept separate from the data-layer server below on purpose: that one is
+built to be used without presign's rules, and paid verdicts inside it would
+dissolve exactly that separation.
+
+Neither MCP server is published to npm; both commands assume a clone with
+`npm install && npm run build` done, run from the repository root.
+
 ### Using the data layer without the rest
 
 The operational layer ships as an MCP server so another team can consume
@@ -366,7 +397,7 @@ freshness-gated data selection without adopting our rules, our simulation, or
 our opinions about what is risky:
 
 ```bash
-claude mcp add presign -- npx -y @presign/mcp-server
+claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
 ```
 
 See [`packages/mcp-server/SKILL.md`](./packages/mcp-server/SKILL.md).

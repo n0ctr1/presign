@@ -261,13 +261,44 @@ A `400` means the request was malformed and is your problem to fix.
 
 ---
 
+## Let a model buy the verdict itself
+
+If you are a model in an MCP client, you do not need to implement x402. A
+separate MCP server makes the payment for you and exposes the paid endpoint as
+one tool:
+
+```
+git clone https://github.com/n0ctr1/presign && cd presign
+npm install && npm run build
+claude mcp add presign-verdict \
+  -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX \
+  -e HEDERA_TESTNET_AGENT_KEY=<private key exactly as the portal shows it> \
+  -- node "$PWD/packages/verdict-mcp/dist/bin.js"
+```
+
+- `get_quote` — free. Prices and which rules each route runs.
+- `check_service` — free. Which rules run and whether data sources are live.
+- `get_verdict` — paid, from a session budget you cannot raise (0.1 HBAR by
+  default, `PRESIGN_SESSION_BUDGET_HBAR`). Every result carries `what_to_do`;
+  follow it. A payment that would exceed the budget is refused before anything
+  is signed, and so is a payment whose price cannot be read.
+
+Neither MCP server is published to npm. Run them from a clone as shown.
+
+Instructions written for the model:
+https://github.com/n0ctr1/presign/blob/main/packages/verdict-mcp/SKILL.md
+
+---
+
 ## The data layer on its own
 
 If you want freshness-gated source selection without our rules, simulation or
 opinions about risk, it ships as a separate MCP server:
 
 ```
-claude mcp add presign -- npx -y @presign/mcp-server
+git clone https://github.com/n0ctr1/presign && cd presign
+npm install && npm run build
+claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
 ```
 
 Seven tools. The ones nothing else answers:

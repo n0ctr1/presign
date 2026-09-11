@@ -155,7 +155,10 @@ you run on top of the data are yours.
 ## Setup
 
 ```bash
-claude mcp add presign -- npx -y @presign/mcp-server
+# Not published to npm: run from a clone, from the repository root.
+git clone https://github.com/n0ctr1/presign && cd presign
+npm install && npm run build
+claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
 ```
 
 Needs a Subgraph Studio API key, resolved in this order:

@@ -757,7 +757,7 @@ footer a:hover{color:var(--violet)}
 
       <div class="tabs" role="tablist" aria-label="Integration examples">
         <button role="tab" aria-selected="true"  aria-controls="p-ts"  id="t-ts">curl · x402</button>
-        <button role="tab" aria-selected="false" aria-controls="p-py"  id="t-py">MCP · data layer</button>
+        <button role="tab" aria-selected="false" aria-controls="p-py"  id="t-py">MCP servers</button>
         <button role="tab" aria-selected="false" aria-controls="p-pol" id="t-pol">what you get back</button>
       </div>
 
@@ -778,10 +778,20 @@ curl -sX POST https://presign.dev/verdict/full \
       </div>
 
       <div class="code" role="tabpanel" id="p-py" aria-labelledby="t-py" hidden>
-        <div class="ch"><span class="fname">the data layer, without the opinions</span></div>
+        <div class="ch"><span class="fname">two MCP servers — paid verdicts, and the data layer</span></div>
 <pre><span class="c"># Freshness-gated source selection ships as its own MCP server, so</span>
 <span class="c"># another team can use it without adopting our rules or simulation.</span>
-claude mcp add presign -- npx -y @presign/mcp-server
+<span class="c"># Not on npm yet: from a clone, after npm install &amp;&amp; npm run build.</span>
+<span class="c"># A model buys a verdict itself — the x402 payment happens inside the tool,</span>
+<span class="c"># from a session budget it cannot raise.</span>
+claude mcp add presign-verdict \
+  -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX -e HEDERA_TESTNET_AGENT_KEY=… \
+  -- node "$PWD/packages/verdict-mcp/dist/bin.js"
+<span class="c">#   get_quote · check_service  free</span>
+<span class="c">#   get_verdict                paid, returns the tier and what_to_do</span>
+
+<span class="c"># The data layer alone, without our rules or opinions about risk:</span>
+claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
 
 <span class="c"># Seven tools. The ones nothing else answers:</span>
 <span class="c">#   resolve_rule_capability     which deployments can serve a rule now</span>

@@ -4,7 +4,10 @@ MCP server answering: **which indexed deployments can serve this risk rule
 right now, and how stale is each one.**
 
 ```bash
-claude mcp add presign -- npx -y @presign/mcp-server
+# Not published to npm: run from a clone, from the repository root.
+git clone https://github.com/n0ctr1/presign && cd presign
+npm install && npm run build
+claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
 ```
 
 See [SKILL.md](./SKILL.md) for the agent-facing instructions.

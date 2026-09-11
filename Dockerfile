@@ -46,8 +46,9 @@ COPY --from=foundry /usr/local/bin/anvil /usr/local/bin/anvil
 # The registry is installed at build time rather than fetched by `npx -y` on
 # first use. Fetching at runtime makes the first verdict of a fresh container
 # depend on npm being reachable, which turns a registry outage into a failed
-# verdict instead of a failed build.
-RUN npm install -g subgraph-registry-mcp@latest
+# verdict instead of a failed build. Pinned to the release this image was
+# verified against: `@latest` turned every rebuild into an unreviewed upgrade.
+RUN npm install -g subgraph-registry-mcp@0.10.1
 ENV REGISTRY_COMMAND=subgraph-registry-mcp \
     REGISTRY_ARGS=""
 

@@ -99,8 +99,10 @@ The catalogue: rules, families, fields, default budgets.
 
 When a proxy's implementation last changed. **No subgraph can answer this** —
 an upgrade is an event, and current state cannot say when it happened, only
-what the implementation is now. This comes from a live event stream, so you
-get the history without holding a Substreams key or waiting out a backfill.
+what the implementation is now. This comes from a live event stream that the
+server runs, so you get the history without holding a Substreams key yourself
+or waiting out a backfill. The server does need one; see the note at the end of
+this section.
 
 Read the answer together with `source`, never alone:
 
@@ -131,7 +133,7 @@ from a proxy with a genuinely clean record.
 
 ## Choosing a freshness budget
 
-The default is 30 s, roughly two Ethereum blocks. Tighter and honest
+The default is 30 s, two and a half Ethereum blocks. Tighter and honest
 deployments fail on ordinary gateway jitter. Looser and the data predates the
 state the transaction is about to land in.
 

@@ -1,6 +1,6 @@
 # Feedback — The Graph
 
-Tracks: AI Tooling (Building from Scratch), Composable.
+Tracks: AI Tooling or AI Use Case (From Scratch, Start Fresh pool), Composable.
 
 ---
 

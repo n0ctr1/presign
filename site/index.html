@@ -547,8 +547,9 @@ footer a:hover{color:var(--violet)}
       <div class="step">
         <p class="n serif">ii</p>
         <h3>Read state</h3>
-        <p>R1 recovers the allowance slot from the diff and proves an unlimited approval. R2 reads
-           proxy slots directly, because admin getters revert for everyone but the admin.</p>
+        <p>R1 recovers the allowance slot from the diff and proves an approval that hands over the
+           balance. R2 reads proxy slots directly, because admin getters revert for everyone but
+           the admin.</p>
         <p class="ms">RPC ONLY · NO INDEXER</p>
       </div>
       <div class="step">
@@ -783,12 +784,13 @@ curl -sX POST https://presign.dev/verdict/full \
 <span class="c"># another team can use it without adopting our rules or simulation.</span>
 <span class="c"># Not on npm yet: from a clone, after npm install &amp;&amp; npm run build.</span>
 <span class="c"># A model buys a verdict itself — the x402 payment happens inside the tool,</span>
-<span class="c"># from a session budget it cannot raise.</span>
-claude mcp add presign-verdict \
-  -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX -e HEDERA_TESTNET_AGENT_KEY=… \
-  -- node "$PWD/packages/verdict-mcp/dist/bin.js"
+<span class="c"># from a session budget it cannot raise. The keys stay in the Ledger Key Ring.</span>
+claude mcp add presign-verdict -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX \
+  -- sh -c 'WALLET_PASS=$(secret-tool lookup service ledger-wallet-cli account default) \
+            exec node …/packages/verdict-mcp/dist/bin.js'
 <span class="c">#   get_quote · check_service  free</span>
 <span class="c">#   get_verdict                paid, returns the tier and what_to_do</span>
+<span class="c">#   sign_transaction           signs only through a verdict; medium needs the Ledger</span>
 
 <span class="c"># The data layer alone, without our rules or opinions about risk:</span>
 claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
@@ -832,7 +834,7 @@ budget  1s  →  <span class="y">unavailable</span>
       <div class="num"><p class="big pending" id="n-journal">—</p><p class="lb">entries in the Hedera journal, our own test calls included</p></div>
       <div class="num"><p class="big pending" id="n-rules">—</p><p class="lb">rules this instance runs</p></div>
       <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks in the current watch window</p></div>
-      <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict</p></div>
+      <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict, by data checked</p></div>
     </div>
     <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
 
@@ -1092,9 +1094,13 @@ tabs.forEach(function (tab) {
    the public mirror node. These are decisions this service actually made, and
    the same topic answers the same rows to anybody who asks it.
 
-   The journal records a transaction hash and never its contents: a consensus
-   log is public and permanent, and publishing calldata would broadcast an
-   agent's strategy to everyone reading.
+   The journal records a salted commitment to the transaction and never its
+   contents: a consensus log is public and permanent, and publishing calldata
+   would broadcast an agent's strategy to everyone reading.
+
+   Everything read from a message is escaped before it reaches the page. Only
+   the operator can write to the topic, so this guards against a leaked key
+   rather than against strangers, and one malformed message drops one row.
    ========================================================================== */
 (function () {
   var el = document.getElementById("ticker");
@@ -1110,23 +1116,36 @@ tabs.forEach(function (tab) {
     return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, "\u2009");
   }
 
+  function escape(value) {
+    return String(value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
   function row(cls, word, detail) {
-    return '<span class="tick"><b class="' + cls + '">' + word + "</b><span>" +
-           detail + "</span></span>";
+    return '<span class="tick"><b class="' + cls + '">' + escape(word) + "</b><span>" +
+           escape(detail) + "</span></span>";
   }
 
   fetch(URL).then(function (r) { return r.json(); }).then(function (body) {
     var rows = (body.messages || []).map(function (m) {
-      var entry = JSON.parse(atob(m.message));
+      var entry;
+      try {
+        entry = JSON.parse(atob(m.message));
+      } catch (e) {
+        return "";
+      }
+      var tier = Object.prototype.hasOwnProperty.call(tone, entry.tier) ? entry.tier : "unknown";
       var source = (entry.sources || [])[0];
+      var lag = source ? Number(source.lag) : NaN;
       /* Lag first. On a page arguing that the age of the evidence is the
          thing nobody reports, the block number is the less interesting half —
          and the shorter line is what lets four entries fit without the
          container slicing the last one through the middle of a word. */
-      var detail = (source ? "lag " + source.lag + "s" : "no indexed source") +
-                   " · seq " + m.sequence_number;
-      return row(tone[entry.tier] || "", entry.tier, detail);
-    });
+      var detail = (isFinite(lag) ? "lag " + lag + "s" : "no indexed source") +
+                   " · seq " + Number(m.sequence_number);
+      return row(tone[tier] || "", tier, detail);
+    }).filter(function (html) { return html !== ""; });
 
     el.innerHTML = rows.length
       ? rows.join("")

@@ -37,7 +37,14 @@ one is present. The file convention `scope__name` maps to the variable
 | `THE_GRAPH_STUDIO_API_KEY` | R3 and R4. Without it neither runs and `/verdict/full` is not offered |
 | `SUBSTREAMS_API_KEY` | R2's upgrade history. Optional; without it R2 reports the history as unavailable |
 | `HCS_TOPIC_ID` | **set this.** See below |
+| `HEDERA_NETWORK` | where payment settles: `hedera:testnet` (default) or `hedera:mainnet` |
+| `FACILITATOR_URL` | override the x402 facilitator. Defaults to Blocky402's host for the network |
 | `MAX_FORK_AGE_SECONDS` | how far the fork may fall behind head. Defaults to 60 |
+| `GATEWAY_FUNDING` | `x402` to pay gateway queries from `BASE_PAYER_KEY` even when a Studio key exists |
+| `BASE_PAYER_KEY` | Base key that pays gateway queries over x402. See below before setting it |
+| `GATEWAY_MAX_SPEND_USDC` | ceiling on everything this process pays the gateway over x402. Defaults to `1` |
+| `REGISTRY_COMMAND`, `REGISTRY_ARGS` | how the registry subprocess is started. Default `npx -y subgraph-registry-mcp@0.10.1`; the image points them at the installed copy |
+| `PRESIGN_SECRETS_DIR` | directory read before the environment. Default `~/.presign/secrets` |
 | `HOST`, `PORT` | bind address and port. Default `0.0.0.0:4021` |
 
 ### Set `HCS_TOPIC_ID`
@@ -56,6 +63,10 @@ us several cents upstream, so anyone can pump it at our expense. Leave it
 unset and queries draw on the Studio plan, where `paid_upstream` honestly
 reports `known: false`. The paid path stays demonstrable locally with
 `npm run demo -- --paid`.
+
+Where it is set, `GATEWAY_MAX_SPEND_USDC` bounds the damage: spend is counted
+when a payment is signed, and past the ceiling the process refuses to sign
+another, so R3 reports its data unavailable rather than the wallet emptying.
 
 ## Health
 
@@ -78,3 +89,21 @@ that issues a certificate for you (a `*.fly.dev`-style hostname, or a managed
 container platform) needs no extra work. On a bare VPS, put Caddy in front —
 with a domain, or with an IP-derived hostname from a service like `sslip.io`
 when there is no domain to hand.
+
+Limit request bodies at the proxy as well as in the service:
+
+```
+presign.dev {
+	@verdict path /verdict/*
+	request_body @verdict {
+		max_size 320KiB
+	}
+	reverse_proxy presign:4021
+}
+```
+
+The service refuses a larger body with `413` on its own, but only after the
+proxy has started streaming it. The connection is then closed with bytes still
+unread, and a proxy that reuses it sends the next request into a dead socket —
+observed as a `502` on the request right after a `413`. Refusing at the proxy
+means the oversized body never reaches the service at all.

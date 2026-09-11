@@ -15,6 +15,49 @@ claude mcp add presign-verdict \
 The id and key can also live in `~/.presign/secrets/hedera__testnet-agent-id`
 and `hedera__testnet-agent-key` instead of the environment.
 
+## Keep the paying key on a Ledger Key Ring
+
+This server is a broker: the model gets `get_verdict` inside a budget it cannot
+raise, and never the key that pays for it. With the key sealed by the
+[Ledger Key Ring CLI](https://developers.ledger.com/docs/ai-tools/ledger-cli),
+it is not in a file, an MCP config or a shell history either. The server looks
+for `~/.presign/ring/hedera__testnet-agent-key.enc` before any file or
+environment variable, and a ring that refuses to decrypt stops startup rather
+than falling back to a plaintext copy.
+
+Once, with the device connected and the Ledger Sync app installed:
+
+```bash
+npm i -g @ledgerhq/wallet-cli
+wallet-cli ring init       # asks for the ring password; store it in your OS keychain
+mkdir -p ~/.presign/ring
+read -rs KEY && printf %s "$KEY" | \
+  WALLET_PASS=$(secret-tool lookup service ledger-wallet-cli account default) \
+  wallet-cli ring encrypt --key presign:hedera:testnet-agent-key \
+    -o ~/.presign/ring/hedera__testnet-agent-key.enc; unset KEY
+```
+
+After that no device is needed. Register the server so the password is read
+from the keychain at launch rather than written into the MCP config:
+
+```bash
+claude mcp add presign-verdict \
+  -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX \
+  -- sh -c 'WALLET_PASS=$(secret-tool lookup service ledger-wallet-cli account default) \
+            exec node "'"$PWD"'/packages/verdict-mcp/dist/bin.js"'
+```
+
+On start it says where the key came from:
+
+```
+presign-verdict-mcp: hedera testnet-agent-key from ledger-key-ring (wallet-cli ring) (hardware-rooted)
+```
+
+`hardware-rooted`, not `hardware`: the ciphertext is useless off this machine
+and removing the machine from the ring ends decryption, but decrypting uses the
+ring membership stored here rather than a touch on the device. The key is in
+this process's memory while it signs payments, as any signing key must be.
+
 Tools:
 
 | tool | cost | answers |

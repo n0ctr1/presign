@@ -18,3 +18,10 @@ export {
 export { SecretResolver, type SecretResolverOptions } from "./resolver.js";
 export { EnvSecretSource, envVarName } from "./sources/env.js";
 export { FileSecretSource, InsecureFilePermissionsError } from "./sources/file.js";
+export {
+  ringFileName,
+  ringKeyName,
+  WalletCliRingError,
+  WalletCliRingSource,
+  type WalletCliRingSourceOptions,
+} from "./sources/wallet-cli-ring.js";

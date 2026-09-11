@@ -14,7 +14,8 @@ import {
 
 const PROTECTION_RANK: Readonly<Record<SecretProtection, number>> = {
   process: 0,
-  hardware: 1,
+  "hardware-rooted": 1,
+  hardware: 2,
 };
 
 export interface SecretResolverOptions {

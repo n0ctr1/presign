@@ -7,12 +7,13 @@ Scope for this project: two Ledger primitives, not wallet branding.
 1. **Device Management Kit (DMK) skills** — escalating a medium-risk verdict to
    on-device confirmation, so a human approves *what* is being signed rather
    than merely attesting *who* the agent is.
-2. **Key Ring CLI** — holding the Subgraph Studio key instead of a `.env` file:
-   one touch at setup, headless decryption afterwards.
+2. **Key Ring** — secrets sealed instead of left in a `.env` file: one touch at
+   setup, headless decryption afterwards. Through `wallet-cli ring`, the verdict
+   MCP server holds the agent's payment key this way and hands the model a
+   budget-capped tool, never the key.
 
-Integration work is scheduled for day 6; these entries come from validating
-the device path early so that day 6 is not the day we discover it does not
-work.
+The early entries come from validating the device path before building on it,
+so that integration was not the moment we discovered it did not work.
 
 ---
 
@@ -351,3 +352,70 @@ the transaction was declined promptly, it did not — the sequence went
 `signTransaction`, `detectBlindSigning`, then `6985`. So the fallback appears
 tied to a device-side timeout rather than to a decline, but we did not pin it
 down and are not claiming otherwise.
+
+---
+
+## 2026-09-11 — `wallet-cli ring init` over SSH: two errors that hide their cause
+
+**Doing:** provisioning a Key Ring with `wallet-cli` 2.1.0 on a Linux machine
+reached over SSH, with a Nano X on its USB port, so the verdict MCP server could
+read the agent's payment key from the ring.
+
+**Found, first:** `✖ No Ledger device found. Unlock the device and try again.`
+The device was unlocked and listed by `lsusb`. The cause was a permission:
+
+```
+/dev/bus/usb/002/003  crw-rw-r--  root root   → open(O_RDWR): EACCES
+/dev/hidraw1          crw-rw----  root plugdev → open(O_RDWR): ok
+```
+
+`wallet-cli` reaches the device through libusb, so it needs the USB node, not
+hidraw. Ledger's udev rules grant the USB node with `TAG+="uaccess"`, and
+`uaccess` applies only to a local seat session; `loginctl` reported this one as
+`Remote=yes` with no seat, so no ACL was ever added. DMK through `node-hid`
+worked on the same machine the whole time, because the hidraw rule uses
+`GROUP="plugdev"`. Adding the same for the USB subsystem fixed it:
+
+```
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2c97", MODE="0660", GROUP="plugdev"
+```
+
+**Found, second:** on the next attempt, `✖ An unknown error occurred talking to
+the Ledger.` The formatter bundled in the binary returns that sentence whenever
+the underlying cause is not an `Error` with a message, so whatever the device or
+transport reported is dropped before it reaches the terminal. Unplugging and
+reconnecting the device, with nothing else changed, made the next attempt
+succeed — so it was a transient transport or device state, plausibly left over
+from the attempts that had failed on permissions. The message gave no way to
+tell that from a real fault.
+
+**Impact:** both messages send an operator to the wrong place — the first to the
+device, the second nowhere. The SSH case is not exotic for this CLI: an agent
+host is usually reached remotely, and the Key Ring pitch is precisely about
+hosts without a person sitting at them.
+
+**Suggestion:** map `EACCES` on the USB node to its own message naming udev and
+`uaccess`; print the raw cause (or its `_tag` and status word) when the error is
+not recognised, at least behind `--verbose`; and ship a `plugdev` group rule
+alongside the `uaccess` one, as the hidraw rule already does.
+
+**What worked:** after `ring init`, `ring encrypt` and `ring decrypt` needed no
+device, exactly as documented. The verdict MCP server decrypted the key through
+`wallet-cli ring decrypt`, confirmed it against the account's public key on the
+Hedera mirror node, and paid for a real verdict — with no copy of the key in any
+file or environment variable. On this machine there is no Secret Service, and
+the member credential landed in the kernel keyring
+(`member-private-key-…@ledger-wallet-cli`), which is held in memory and will not
+survive a reboot. Worth one sentence in the docs for headless Linux.
+
+**Same day, through DMK rather than the CLI:** the escalation demo reached
+`signTransaction` while nobody was looking at the device. The action ended as
+`{ status: "stopped" }`, not as a `6985` decline and not at our own 120-second
+timeout. The next run, in a new process, failed on the first exchange with
+`Unexpected device exchange error happened.` — no step was even reached — and
+kept failing until the device was unplugged and reconnected. After that the
+same scenario went through to `detectBlindSigning` and was confirmed on the
+device. So an unattended review screen can leave the device refusing every later
+session, and nothing in either error says that a reconnect is the fix. That is
+the same recovery the CLI needed above, which suggests one cause underneath
+both.

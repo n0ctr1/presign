@@ -28,8 +28,14 @@ export interface SecretRef {
  * by anything that can read this process's memory, environment or filesystem.
  * The distinction is what lets an operator answer "could this key have leaked"
  * without reading the deployment scripts.
+ *
+ * `hardware-rooted` sits between them and is named for what it is rather than
+ * rounded up. The secret is sealed under a key the Ledger Key Ring derives, so
+ * it is ciphertext at rest and useless off this machine, and removing the
+ * machine from the ring ends decryption. But decrypting needs the ring
+ * membership stored on this machine, not the device, so it is not `hardware`.
  */
-export type SecretProtection = "hardware" | "process";
+export type SecretProtection = "hardware" | "hardware-rooted" | "process";
 
 /** A resolved secret together with the record of who answered. */
 export interface ResolvedSecret {

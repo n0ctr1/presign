@@ -47,9 +47,34 @@ If it returns `payer_not_configured`, relay the `setup` text to your user.
 
 ## Choosing options
 
-- `route: "full"` (default, 0.005 HBAR) runs all four rules. Use `local`
-  (0.001 HBAR) only when protocol accounting and counterparty identity do not
-  matter.
+- `route: "full"` (default) runs all four rules. It is metered: 0.001 HBAR plus
+  0.001 for each indexed deployment the verdict checks for that counterparty, at
+  most 0.009. `get_quote` shows the rates. Use `local` (0.001 HBAR) only when
+  protocol accounting and counterparty identity do not matter.
 - `journal: "sync"` (default) waits for the verdict to be recorded on Hedera and
   returns a sequence number (~4s). `async` answers in ~2.4s and returns `queued`.
   Use `sync` when a record may later need to be cited.
+
+## Signing: `sign_transaction`
+
+Present only when this server holds an Ethereum key. If it is in your tool
+list, it is the **only** way to get a signature, and it signs only through a
+verdict on the exact transaction and this server's policy:
+
+| verdict | result |
+|---|---|
+| `low` | `decision: "signed"` with `raw_transaction` |
+| `medium` | a human approves the decoded transaction on a Ledger first; `signed_after_human_approval`, or `declined_by_human`, or `escalation_required` when no device is attached |
+| `high`, `unavailable` | `decision: "refused"`, nothing signed |
+
+Sending value is treated as `medium` whenever it goes to a recipient outside
+the server's allowlist or exceeds its per-transaction ceiling, even on a `low`
+verdict; `policy_reasons` in the result says why. Past the session ceiling, or
+with a fee past its ceiling, the result is `refused`.
+
+Pass `to`, `value`, `data` and `chainId`, nothing more. Sender, nonce, gas and
+fees are the server's. Nothing is broadcast; broadcasting a signed transaction
+is a separate decision for you and your user.
+
+When the decision is anything but a signature, do not look for another way to
+sign. The refusal is the product working.

@@ -7,6 +7,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../ledger" },
     { "path": "../payer" },
     { "path": "../secrets" }
   ]

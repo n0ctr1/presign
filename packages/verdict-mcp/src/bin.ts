@@ -18,8 +18,12 @@ import {
   SecretResolver,
   WalletCliRingSource,
 } from "@presign/secrets";
+import { formatEther, formatGwei, parseEther, parseGwei } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
-import { createVerdictServer } from "./server.js";
+import { DEFAULT_BROKER_POLICY, type BrokerPolicy, type HumanApprover } from "./broker.js";
+import { rpcChainReader } from "./chain.js";
+import { createVerdictServer, type VerdictServerConfig } from "./server.js";
 
 // stdout is the MCP transport. Anything written there that is not a JSON-RPC
 // frame corrupts the stream, so every diagnostic goes to stderr.
@@ -49,19 +53,38 @@ const secrets = new SecretResolver([
   new FileSecretSource(process.env["PRESIGN_SECRETS_DIR"] ?? join(homedir(), ".presign", "secrets")),
   new EnvSecretSource(),
 ]);
-const read = async (name: string): Promise<string | null> => {
+const readSecret = async (scope: string, name: string): Promise<string | null> => {
   try {
-    const resolved = await secrets.resolve({ scope: "hedera", name });
+    const resolved = await secrets.resolve({ scope, name });
     // Where the key came from is the first thing to check if it might have
     // leaked, so it is said on every start.
-    say(`hedera ${name} from ${resolved.source} (${resolved.protection})`);
+    say(`${scope} ${name} from ${resolved.source} (${resolved.protection})`);
     return resolved.value;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!/not found|no source/i.test(message)) say(`could not read hedera ${name}: ${message}`);
+    if (!/not found|no source/i.test(message)) say(`could not read ${scope} ${name}: ${message}`);
     return null;
   }
 };
+const read = (name: string) => readSecret("hedera", name);
+
+/** The Ledger as a human approver: its address, and a way to ask it. */
+async function ledgerApprover(): Promise<HumanApprover> {
+  // Imported only when asked for, so a machine without the device packages
+  // still runs every other tool.
+  const { LedgerDevice, DeviceConfirmation } = await import("@presign/ledger");
+  const device = await LedgerDevice.connect({ discoveryTimeoutMs: 8_000 });
+  const confirmation = new DeviceConfirmation({
+    device,
+    onProgress: (step) => say(`device: ${step}`),
+  });
+  const address = (await confirmation.address()) as `0x${string}`;
+  return {
+    address,
+    request: (signable, verdict) =>
+      confirmation.request(signable as never, verdict as never) as never,
+  };
+}
 
 const upper = short.toUpperCase();
 const setupHint =
@@ -91,6 +114,61 @@ if (accountId !== null && rawKey !== null) {
   say("no Hedera account configured; get_verdict will explain how to add one");
 }
 
-const server = createVerdictServer({ baseUrl, payer, setupHint });
+/*
+ * The signing broker, when the agent has an Ethereum key.
+ *
+ * With it the model can ask for a signature, and every signature runs through
+ * a verdict on the exact transaction. Without it there is no signing tool at
+ * all — offering one that could only refuse would teach the model to go
+ * looking for a key elsewhere.
+ */
+let broker: VerdictServerConfig["broker"] = null;
+const evmKey = await readSecret("ethereum", "agent-key");
+if (evmKey !== null) {
+  try {
+    // A verdict fetched over plain HTTP is a verdict anyone on the path can
+    // rewrite to `low`. Local development is the only exception.
+    const service = new URL(baseUrl);
+    const local = service.hostname === "localhost" || service.hostname === "127.0.0.1";
+    if (service.protocol !== "https:" && !local) {
+      throw new Error(`PRESIGN_URL must be https to sign on its verdicts, not ${service.protocol}`);
+    }
+
+    const hex = (evmKey.startsWith("0x") ? evmKey : `0x${evmKey}`) as `0x${string}`;
+    const account = privateKeyToAccount(hex);
+    const rpcUrl =
+      process.env["ETH_RPC_URL"] ??
+      (await readSecret("ethereum", "rpc-url")) ??
+      "https://ethereum-rpc.publicnode.com";
+
+    const policy: BrokerPolicy = {
+      allowedRecipients: new Set(
+        (process.env["PRESIGN_BROKER_ALLOW"] ?? "")
+          .split(",")
+          .map((address) => address.trim().toLowerCase())
+          .filter((address) => /^0x[0-9a-f]{40}$/.test(address)),
+      ),
+      maxEthPerTransactionWei: parseEther(process.env["PRESIGN_BROKER_MAX_ETH_PER_TX"] ?? formatEther(DEFAULT_BROKER_POLICY.maxEthPerTransactionWei)),
+      maxEthPerSessionWei: parseEther(process.env["PRESIGN_BROKER_MAX_ETH_PER_SESSION"] ?? formatEther(DEFAULT_BROKER_POLICY.maxEthPerSessionWei)),
+      maxFeeWei: parseEther(process.env["PRESIGN_BROKER_MAX_FEE_ETH"] ?? formatEther(DEFAULT_BROKER_POLICY.maxFeeWei)),
+      maxPriorityFeePerGasWei: parseGwei(process.env["PRESIGN_BROKER_MAX_PRIORITY_GWEI"] ?? formatGwei(DEFAULT_BROKER_POLICY.maxPriorityFeePerGasWei)),
+    };
+
+    const approver = process.env["PRESIGN_LEDGER"] === "1" ? await ledgerApprover() : null;
+    broker = { account, chain: rpcChainReader(rpcUrl), approver, policy };
+    say(
+      `sign_transaction signs as ${account.address}; ${policy.allowedRecipients.size} allowlisted recipient(s), ` +
+        `${formatEther(policy.maxEthPerTransactionWei)} ETH per transaction and ` +
+        `${formatEther(policy.maxEthPerSessionWei)} ETH per session without a human; ` +
+        (approver === null
+          ? "medium verdicts are refused, no device attached (PRESIGN_LEDGER=1 attaches one)"
+          : `medium verdicts need the Ledger at ${approver.address}`),
+    );
+  } catch (error) {
+    say(`signing broker unavailable — ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+const server = createVerdictServer({ baseUrl, payer, setupHint, broker });
 await server.connect(new StdioServerTransport());
 say(`ready on stdio, verdicts from ${baseUrl}`);

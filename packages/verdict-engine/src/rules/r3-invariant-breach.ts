@@ -30,6 +30,7 @@ import {
 } from "@presign/operational-layer";
 
 import { evaluated } from "../types.js";
+import { plainText, quotedName } from "./untrusted-text.js";
 import type {
   Address,
   Finding,
@@ -52,6 +53,22 @@ const SELECTOR = {
 } as const;
 
 const WORD = /^0x[0-9a-fA-F]{64}$/;
+
+/** The block a response was answered at, from its own `_meta`; null when absent. */
+function metaOf(
+  value: unknown,
+): { block: number; timestamp: number; hasIndexingErrors: boolean } | null {
+  if (typeof value !== "object" || value === null) return null;
+  const meta = value as {
+    block?: { number?: unknown; timestamp?: unknown } | null;
+    hasIndexingErrors?: unknown;
+  };
+  const block = meta.block?.number;
+  const timestamp = meta.block?.timestamp;
+  if (typeof block !== "number" || typeof timestamp !== "number") return null;
+  // Absent is read as erroring, as the liveness probe reads it.
+  return { block, timestamp, hasIndexingErrors: meta.hasIndexingErrors !== false };
+}
 
 /** An ABI-encoded address, or null for anything else including zero. */
 function addressOf(word: Hex | null): Address | null {
@@ -332,8 +349,84 @@ export interface ProtocolContext {
   query<T>(deploymentId: string, query: string): Promise<T>;
 }
 
+/**
+ * The deployments R3 will probe for a counterparty, before probing any.
+ *
+ * Shared by the rule and by anything that prices a verdict, so a price quoted
+ * before payment counts exactly the deployments the rule then reads — not an
+ * estimate of them that could drift from the code that spends the queries.
+ * It costs registry lookups and, for a pool, a few calls against the fork;
+ * nothing here queries the metered gateway.
+ */
+async function planCandidates(
+  protocol: Pick<ProtocolContext, "findIndexingDeployments">,
+  target: Address,
+  network: NetworkId,
+  call: RuleContext["call"],
+) {
+  const direct = await protocol.findIndexingDeployments(target, network);
+
+  /*
+   * Deployments that index the counterparty through the factory that made
+   * it. These are asked about this one entity by id, never for a sample of
+   * the protocol, because they index every pool the factory ever created and
+   * the verdict is about this pool.
+   */
+  const resolved = await confirmedFactory(target, call);
+  const viaFactory =
+    resolved === null
+      ? []
+      : (await protocol.findIndexingDeployments(resolved.factory, network)).filter(
+          (candidate) => !direct.some((d) => d.deploymentId === candidate.deploymentId),
+        );
+
+  const indexing = [
+    ...direct.map((candidate) => ({ candidate, entity: null as Address | null })),
+    ...viaFactory.map((candidate) => ({ candidate, entity: target as Address | null })),
+  ];
+
+  const specced = indexing.flatMap(({ candidate, entity }) => {
+    const family = candidate.schemaFamily;
+    if (family === null) return [];
+    const spec = SPECS[family];
+    return spec === undefined ? [] : [{ candidate, spec, family, entity }];
+  });
+
+  return { resolved, specced };
+}
+
+/** How many deployments R3 would probe for this counterparty on this chain. */
+export async function countInvariantCandidates(
+  protocol: Pick<ProtocolContext, "findIndexingDeployments">,
+  to: Address | null,
+  chainId: number,
+  call: RuleContext["call"],
+): Promise<number> {
+  const network = CHAIN_TO_NETWORK[chainId];
+  if (to === null || network === undefined) return 0;
+  const { specced } = await planCandidates(
+    protocol,
+    to.toLowerCase() as Address,
+    network,
+    call,
+  );
+  return specced.length;
+}
+
+/**
+ * Deployments R3 probes for one counterparty at most.
+ *
+ * Every probe is a conformance check and a liveness check against the metered
+ * gateway, and the service prices a verdict by this same number. Without a
+ * ceiling, a contract indexed by dozens of deployments — anyone can publish a
+ * subgraph naming any address — would cost queries far past what was charged.
+ */
+export const MAX_INVARIANT_CANDIDATES = 8;
+
 export interface InvariantBreachRuleOptions {
   readonly protocol: ProtocolContext;
+  /** Defaults to {@link MAX_INVARIANT_CANDIDATES}. */
+  readonly maxCandidates?: number;
   /** Entities examined per protocol, largest first. */
   readonly sampleSize?: number;
   /**
@@ -355,10 +448,12 @@ export class InvariantBreachRule implements Rule {
   readonly #protocol: ProtocolContext;
   readonly #sampleSize: number;
   readonly #maxLagSeconds: number | null;
+  readonly #maxCandidates: number;
   readonly #now: () => Date;
 
   constructor(options: InvariantBreachRuleOptions) {
     this.#protocol = options.protocol;
+    this.#maxCandidates = options.maxCandidates ?? MAX_INVARIANT_CANDIDATES;
     this.#sampleSize = options.sampleSize ?? 10;
     this.#maxLagSeconds = options.maxLagSeconds ?? null;
     this.#now = options.now ?? (() => new Date());
@@ -405,33 +500,14 @@ export class InvariantBreachRule implements Rule {
      * a conforming deployment that is stale is a protocol we should be able to
      * check and currently cannot, which is the fail-closed case.
      */
-    const direct = await this.#protocol.findIndexingDeployments(target, network);
-
-    /*
-     * Deployments that index the counterparty through the factory that made
-     * it. These are asked about this one entity by id, never for a sample of
-     * the protocol, because they index every pool the factory ever created and
-     * the verdict is about this pool.
-     */
-    const resolved = await confirmedFactory(target, context.call);
-    const viaFactory =
-      resolved === null
-        ? []
-        : (await this.#protocol.findIndexingDeployments(resolved.factory, network)).filter(
-            (candidate) => !direct.some((d) => d.deploymentId === candidate.deploymentId),
-          );
-
-    const indexing = [
-      ...direct.map((candidate) => ({ candidate, entity: null as Address | null })),
-      ...viaFactory.map((candidate) => ({ candidate, entity: target as Address | null })),
-    ];
-
-    const specced = indexing.flatMap(({ candidate, entity }) => {
-      const family = candidate.schemaFamily;
-      if (family === null) return [];
-      const spec = SPECS[family];
-      return spec === undefined ? [] : [{ candidate, spec, family, entity }];
-    });
+    const { resolved, specced: planned } = await planCandidates(
+      this.#protocol,
+      target,
+      network,
+      context.call,
+    );
+    const truncated = planned.length > this.#maxCandidates;
+    const specced = planned.slice(0, this.#maxCandidates);
 
     if (specced.length === 0) return evaluated([]);
 
@@ -484,6 +560,20 @@ export class InvariantBreachRule implements Rule {
         };
       }
 
+      // The ceiling is not allowed to become a clean answer. Deployments left
+      // unprobed may include one that speaks the schema, so "nothing to check"
+      // would rest on candidates we never looked at.
+      if (truncated) {
+        return {
+          status: "unavailable",
+          reason: "too_many_candidates",
+          detail:
+            `${planned.length} deployments index ${target}; the first ${specced.length} were ` +
+            `probed and none can answer for this protocol, so whether one of the other ` +
+            `${planned.length - specced.length} could is unknown.`,
+        };
+      }
+
       // Every probe completed and nothing speaks a schema we can reason about,
       // so the counterparty is not a protocol instance R3 evaluates. R1, R2
       // and the unidentified-contract class carry the verdict from here.
@@ -530,8 +620,15 @@ export class InvariantBreachRule implements Rule {
      * for.
      */
     const attempts: string[] = [];
+    let stale = 0;
     let answered:
-      | { entry: (typeof fresh)[number]; entities: readonly Record<string, unknown>[] }
+      | {
+          entry: (typeof fresh)[number];
+          entities: readonly Record<string, unknown>[];
+          block: number;
+          lagSeconds: number;
+          measuredAt: Date;
+        }
       | null = null;
 
     for (const candidate of fresh) {
@@ -541,20 +638,55 @@ export class InvariantBreachRule implements Rule {
       // collection with a singular lookup by id.
       const single = root.endsWith("s") ? root.slice(0, -1) : root;
       const fields = candidate.spec.fields.join(" ");
+      const name = plainText(candidate.record.candidate.displayName, 80);
+      /*
+       * The age of the evidence is read from the response that carries it.
+       *
+       * The probe measured one indexer up to ten seconds ago, and the gateway
+       * routes each query to whichever indexer it picks. Quoting the probe's
+       * lag over data served by another, slower indexer would make this
+       * project's central claim about data it never measured. `_meta` in the
+       * same document is answered at the block the entities were read at, and
+       * `number_gte` turns away an indexer behind the block the probe saw.
+       */
+      const floor = `block: { number_gte: ${candidate.record.liveness.indexedBlock} }`;
+      const meta = "_meta { block { number timestamp } hasIndexingErrors }";
       const text =
         candidate.entity === null
-          ? `{ ${root}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc) { ${fields} } }`
-          : `{ ${single}(id: "${candidate.entity}") { ${fields} } }`;
+          ? `{ ${root}(first: ${this.#sampleSize}, orderBy: totalValueLockedUSD, orderDirection: desc, ${floor}) { ${fields} } ${meta} }`
+          : `{ ${single}(id: "${candidate.entity}", ${floor}) { ${fields} } ${meta} }`;
       try {
         const data = await this.#protocol.query<Record<string, unknown>>(
           candidate.record.candidate.deploymentId,
           text,
         );
+        const measuredAt = this.#now();
+        const answeredAt = metaOf(data["_meta"]);
+        if (answeredAt === null) {
+          attempts.push(`${name}: answered without _meta, so the age of its data is unknown`);
+          continue;
+        }
+        if (answeredAt.hasIndexingErrors) {
+          attempts.push(`${name}: reports indexing errors`);
+          continue;
+        }
+        const lagSeconds = Math.max(0, measuredAt.getTime() / 1000 - answeredAt.timestamp);
+        if (lagSeconds > requirementFor.maxLagSeconds) {
+          stale += 1;
+          attempts.push(
+            `${name}: answered from block ${answeredAt.block}, ${Math.round(lagSeconds)}s behind ` +
+              `head, past the ${requirementFor.maxLagSeconds}s budget`,
+          );
+          continue;
+        }
+        const at = { block: answeredAt.block, lagSeconds, measuredAt };
+
         if (candidate.entity === null) {
           const rows = data[root];
           answered = {
             entry: candidate,
             entities: Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [],
+            ...at,
           };
           break;
         }
@@ -563,21 +695,28 @@ export class InvariantBreachRule implements Rule {
           // Fresh and conforming, but it has not indexed this pool — a pool
           // created after its head block, or one it filters out. That is not a
           // pool with sound accounting, so the next candidate is asked.
-          attempts.push(
-            `${candidate.record.candidate.displayName}: holds no ${single} ${candidate.entity}`,
-          );
+          attempts.push(`${name}: holds no ${single} ${candidate.entity}`);
           continue;
         }
-        answered = { entry: candidate, entities: [row as Record<string, unknown>] };
+        answered = { entry: candidate, entities: [row as Record<string, unknown>], ...at };
         break;
       } catch (error) {
         attempts.push(
-          `${candidate.record.candidate.displayName}: ${error instanceof Error ? error.message : String(error)}`,
+          `${name}: ${plainText(error instanceof Error ? error.message : String(error), 300)}`,
         );
       }
     }
 
     if (answered === null) {
+      // Every answer arrived, and every one was older than the budget: the
+      // probes were fresh, the data was not.
+      if (stale === fresh.length) {
+        return {
+          status: "unavailable",
+          reason: "all_candidates_stale",
+          detail: `every fresh deployment answered with data past its freshness budget — ${attempts.join("; ")}`,
+        };
+      }
       // A query that fails is not a protocol that is healthy.
       return {
         status: "unavailable",
@@ -590,10 +729,10 @@ export class InvariantBreachRule implements Rule {
     const spec = chosen.spec;
     const family = chosen.family;
     const record = chosen.record;
-    const requirement = this.#requirementFor(spec);
     const entities = answered.entities;
 
-    const lagSeconds = Number(chosen.lag.toFixed(1));
+    const lagSeconds = Number(answered.lagSeconds.toFixed(1));
+    const deploymentName = plainText(record.candidate.displayName, 80);
     const findings: Finding[] = [];
 
     for (const entity of entities) {
@@ -602,21 +741,23 @@ export class InvariantBreachRule implements Rule {
           ruleId: this.id,
           severity: "critical",
           standing: true,
-          title: `Protocol accounting is inconsistent: ${breach.entityName}`,
-          detail: breach.detail,
+          // The entity's name is the subgraph author's text. Quoted and
+          // stripped, it can name a pool but cannot speak for the verdict.
+          title: `Protocol accounting is inconsistent: ${quotedName(breach.entityName)}`,
+          detail: plainText(breach.detail, 500),
           evidence: {
             check: breach.check,
             schema_family: family,
-            entity_id: breach.entityId,
-            entity_name: breach.entityName,
+            entity_id: plainText(breach.entityId, 128),
+            entity_name: plainText(breach.entityName, 128),
             values: breach.values,
             // Provenance travels with the finding, not just the verdict: a
             // breach claim is only checkable if the reader knows which
             // deployment said so and how stale it was.
             deployment_id: record.candidate.deploymentId,
-            deployment_name: record.candidate.displayName,
+            deployment_name: deploymentName,
             effective_lag_seconds: lagSeconds,
-            indexed_block: record.liveness.indexedBlock,
+            indexed_block: answered.block,
             ...(chosen.entity === null || resolved === null
               ? {}
               : {
@@ -633,9 +774,9 @@ export class InvariantBreachRule implements Rule {
 
     const source: VerdictSource = {
       deploymentId: record.candidate.deploymentId,
-      displayName: record.candidate.displayName,
+      displayName: deploymentName,
       effectiveLagSeconds: lagSeconds,
-      measuredAt: record.liveness.checkedAt.toISOString(),
+      measuredAt: answered.measuredAt.toISOString(),
     };
 
     // Reported whether or not anything was found: a clean R3 result is a claim

@@ -174,16 +174,30 @@ test("one rule throwing does not lose another rule's findings", async () => {
   assert.equal(verdict.findings.length, 1);
 });
 
-test("a reverting transaction is reported as an observation", async () => {
+test("a reverting transaction is unavailable, not low", async () => {
   const verdict = await engine(
     [ruleFinding("R1", [])],
     simulator("execution reverted: insufficient balance"),
   ).evaluate(tx);
 
-  const revert = verdict.findings.find((f) => f.ruleId === "SIM");
-  assert.ok(revert);
-  // It changes nothing on success paths, so it does not raise the tier.
-  assert.equal(verdict.tier, "low");
+  // The rules that read what a transaction changes had nothing to read. That
+  // is a transaction not evaluated, and a contract that reverts on the fork
+  // but not on chain is how code hides from simulation.
+  assert.equal(verdict.tier, "unavailable");
+  assert.deepEqual(
+    verdict.provenance.unavailableRules.map((r) => [r.ruleId, r.reason]),
+    [["SIM", "reverts_in_simulation"]],
+  );
+  assert.equal(verdict.effects.observed, false);
+});
+
+test("a definite finding still outranks a revert", async () => {
+  const verdict = await engine(
+    [ruleFinding("R4", [finding({ ruleId: "R4", severity: "critical", standing: true })])],
+    simulator("execution reverted"),
+  ).evaluate(tx);
+
+  assert.equal(verdict.tier, "high");
 });
 
 test("a transaction for another chain is unavailable, and nothing is simulated", async () => {
@@ -222,6 +236,47 @@ test("a transaction for another chain is unavailable, and nothing is simulated",
     ],
   );
   assert.match(verdict.provenance.unavailableRules[0]!.detail, /simulates chain 1/);
+});
+
+test("provenance states how old the simulated block and every list were", async () => {
+  const sim = {
+    ...(simulator() as object),
+    simulate: () =>
+      Promise.resolve({
+        pre: {},
+        post: {},
+        blockNumber: 25916120,
+        // Twenty-four seconds before the verdict.
+        blockTimestamp: T0.getTime() / 1000 - 24,
+        revertReason: null,
+      }),
+  } as never;
+  const listed = {
+    id: "R1",
+    title: "R1",
+    evaluate: () =>
+      Promise.resolve({
+        status: "evaluated",
+        findings: [],
+        lists: [
+          {
+            source: "ScamSniffer scam-database",
+            url: "https://example.invalid/address.json",
+            entries: 2530,
+            fetchedAt: new Date(T0.getTime() - 3 * 3600 * 1000).toISOString(),
+          },
+        ],
+      }),
+  } as never as Rule;
+
+  const verdict = await engine([listed], sim).evaluate(tx);
+
+  // Indexed lag alone is half the staleness: the simulation and the blacklist
+  // have ages too, and a reader cannot see the operator's refresh settings.
+  assert.equal(verdict.provenance.simulatedBlockAgeSeconds, 24);
+  assert.equal(verdict.provenance.lists.length, 1);
+  assert.equal(verdict.provenance.lists[0]?.ageSeconds, 3 * 3600);
+  assert.equal(verdict.provenance.lists[0]?.entries, 2530);
 });
 
 test("provenance records the simulated block and chain", async () => {

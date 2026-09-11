@@ -88,8 +88,20 @@ export interface VerdictProvenance {
    * about that transaction, and it would be evidence about Ethereum.
    */
   readonly simulatedAtBlock: number | null;
+  /**
+   * How old that block was when the verdict was formed, in seconds, or null
+   * when nothing was simulated.
+   *
+   * The fork is re-forked once it passes an age limit, which is an operator
+   * setting the reader cannot see. A verdict that names the lag of its indexed
+   * data and stays silent about the age of its own simulation would be
+   * declaring half its staleness.
+   */
+  readonly simulatedBlockAgeSeconds: number | null;
   /** Chain the transaction is for. */
   readonly chainId: number;
+  /** Address lists the verdict consulted, and how old each was. */
+  readonly lists: readonly VerdictList[];
   /** Indexed sources consulted, with their lag at the time of use. */
   readonly sources: readonly VerdictSource[];
   /**
@@ -109,11 +121,41 @@ export interface VerdictProvenance {
   }[];
 }
 
+/**
+ * Value the transaction moves out of the sender, as the simulation shows it.
+ *
+ * Not a finding and not part of the tier. An advisor has no business deciding
+ * that paying a stranger is dangerous — that is ordinary — but whatever signs
+ * on the sender's behalf needs the fact to apply its own policy to, and a
+ * transfer to an attacker trips none of the rules. Amounts are decimal strings
+ * so the verdict stays JSON.
+ */
+export interface ValueEffects {
+  /** False when nothing was read: the transaction reverted or was never simulated. */
+  readonly observed: boolean;
+  /** Wei leaving the sender. The simulation charges no gas, so this is value sent. */
+  readonly ethOutWei: string;
+  /** Accounts whose ETH balance rose. */
+  readonly ethRecipients: readonly Address[];
+  readonly tokensOut: readonly {
+    readonly token: Address;
+    /** Units leaving the sender's balance entry on this token. */
+    readonly amountOut: string;
+    /** Holders whose balance entry on this token rose and could be named. */
+    readonly recipients: readonly Address[];
+    /** No balance rose anywhere on this token: the units were burned. */
+    readonly burned: boolean;
+    /** Something rose that no candidate address explains, and nothing that one does. */
+    readonly unidentifiedRecipient: boolean;
+  }[];
+}
+
 export interface Verdict {
   readonly tier: RiskTier;
   readonly action: string;
   readonly findings: readonly Finding[];
   readonly provenance: VerdictProvenance;
+  readonly effects: ValueEffects;
   readonly evaluatedAt: string;
 }
 
@@ -141,6 +183,8 @@ export interface StateDiff {
   readonly pre: Readonly<Record<Address, AccountDiff>>;
   readonly post: Readonly<Record<Address, AccountDiff>>;
   readonly blockNumber: number;
+  /** Unix seconds of that block, when the fork reported it. */
+  readonly blockTimestamp?: number;
   /** Set when the transaction reverts; rules must not read a reverted diff. */
   readonly revertReason: string | null;
 }
@@ -158,9 +202,12 @@ export interface RuleContext {
    * Returns null when the call reverts, rather than throwing. Probing a
    * contract for an interface it may not implement is a normal, expected
    * miss — a rule should be able to ask "are you a timelock?" without
-   * wrapping every question in a try block.
+   * wrapping every question in a try block. Any other failure throws, and
+   * the rule is reported unavailable.
    */
   readonly call: (address: Address, data: Hex) => Promise<Hex | null>;
+  /** What the transaction moves out of the sender's wallet, read once by the engine. */
+  readonly effects?: ValueEffects;
 }
 
 /**
@@ -180,6 +227,27 @@ export interface VerdictSource {
   readonly measuredAt: string;
 }
 
+/**
+ * An address list a rule consulted, as the rule saw it.
+ *
+ * A list is evidence with an age like any other. R1 escalating against a
+ * blacklist fetched six hours ago is a different claim from one fetched a
+ * minute ago, and saying so only on `/health` would leave the verdict itself
+ * silent about it.
+ */
+export interface RuleList {
+  readonly source: string;
+  readonly url: string | null;
+  readonly entries: number;
+  /** When the copy in use was fetched; null for a list supplied by hand. */
+  readonly fetchedAt: string | null;
+}
+
+export interface VerdictList extends RuleList {
+  /** Age of the copy at the moment of the verdict, in seconds. */
+  readonly ageSeconds: number | null;
+}
+
 export type RuleOutcome =
   | {
       readonly status: "evaluated";
@@ -191,6 +259,8 @@ export type RuleOutcome =
        * are different claims, and only the second can be checked.
        */
       readonly sources?: readonly VerdictSource[];
+      /** Address lists consulted, reported whether or not anything matched. */
+      readonly lists?: readonly RuleList[];
     }
   | {
       readonly status: "unavailable";
@@ -210,8 +280,12 @@ export interface Rule {
 export function evaluated(
   findings: readonly Finding[],
   sources?: readonly VerdictSource[],
+  lists?: readonly RuleList[],
 ): RuleOutcome {
-  return sources === undefined
-    ? { status: "evaluated", findings }
-    : { status: "evaluated", findings, sources };
+  return {
+    status: "evaluated",
+    findings,
+    ...(sources === undefined ? {} : { sources }),
+    ...(lists === undefined ? {} : { lists }),
+  };
 }

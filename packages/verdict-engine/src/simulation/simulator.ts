@@ -17,10 +17,33 @@ import type {
 } from "../types.js";
 
 export class SimulationError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** The node's own error object, when the node answered with one. */
+  readonly rpcError: { readonly code?: number; readonly message?: string } | undefined;
+
+  constructor(
+    message: string,
+    options?: { cause?: unknown; rpcError?: { code?: number; message?: string } },
+  ) {
     super(`simulation failed: ${message}`, options);
     this.name = "SimulationError";
+    this.rpcError = options?.rpcError;
   }
+}
+
+/**
+ * Whether a JSON-RPC error means the execution itself failed.
+ *
+ * Code 3 is the standard "execution reverted"; the messages cover nodes that
+ * report out-of-gas or a failed balance check without it. Anything else — a
+ * missing trie node, a rate limit, a timeout — is the node failing to answer,
+ * which says nothing about the transaction.
+ */
+function isExecutionFailure(error: { code?: number; message?: string } | undefined): boolean {
+  if (error === undefined) return false;
+  if (error.code === 3) return true;
+  return /revert|out of gas|invalid opcode|invalid jump|stack (?:under|over)flow|insufficient funds/i.test(
+    error.message ?? "",
+  );
 }
 
 interface RpcAccount {
@@ -97,7 +120,8 @@ export class ForkSimulator {
 
   /** Verdicts currently reading the fork. A reset must not land among them. */
   #active = 0;
-  #resetting = false;
+  /** The reset under way, shared by everyone who finds the fork stale. */
+  #reset: Promise<void> | null = null;
   #waiting: (() => void)[] = [];
 
   constructor(rpcUrl: string, options: ForkSimulatorOptions = {}) {
@@ -141,7 +165,15 @@ export class ForkSimulator {
    * the state moving while the verdict is being formed.
    */
   async withFreshFork<T>(work: () => Promise<T>): Promise<T> {
-    await this.#refreshIfStale();
+    /*
+     * Joining the readers is safe only while no reset is under way, and that
+     * has to be checked in the same synchronous step as the increment. An
+     * earlier version checked, awaited the fork's age, and then joined — and a
+     * reset started by another verdict in that gap landed inside this one.
+     */
+    do {
+      await this.#refreshIfStale();
+    } while (this.#reset !== null);
     this.#active += 1;
     try {
       return await work();
@@ -171,30 +203,34 @@ export class ForkSimulator {
   async #refreshIfStale(): Promise<void> {
     if (this.#maxForkAgeSeconds === null || this.#forkUrl === null) return;
 
+    const forkUrl = this.#forkUrl;
+
     // A reset already under way: wait for it rather than starting a second.
-    while (this.#resetting) {
-      await new Promise<void>((resolve) => this.#waiting.push(resolve));
-    }
+    while (this.#reset !== null) await this.#reset;
 
     if ((await this.#forkAgeSeconds()) <= this.#maxForkAgeSeconds) return;
 
-    this.#resetting = true;
-    try {
-      // Drain the verdicts already reading the fork before moving it.
-      while (this.#active > 0) {
-        await new Promise<void>((resolve) => this.#waiting.push(resolve));
+    // Another verdict may have started a reset while the age was being read.
+    // Its promise is the one to wait on; the caller's loop does that.
+    if (this.#reset !== null) return;
+
+    this.#reset = (async () => {
+      try {
+        // Drain the verdicts already reading the fork before moving it.
+        while (this.#active > 0) {
+          await new Promise<void>((resolve) => this.#waiting.push(resolve));
+        }
+        await this.#rpc<null>("anvil_reset", [{ forking: { jsonRpcUrl: forkUrl } }]);
+      } finally {
+        this.#reset = null;
+        this.#wake();
       }
-      await this.#rpc<null>("anvil_reset", [
-        { forking: { jsonRpcUrl: this.#forkUrl } },
-      ]);
-    } finally {
-      this.#resetting = false;
-      this.#wake();
-    }
+    })();
+    await this.#reset;
   }
 
   async #rpc<T>(method: string, params: unknown[]): Promise<T> {
-    let payload: { result?: T; error?: { message?: string } };
+    let payload: { result?: T; error?: { code?: number; message?: string } };
     try {
       const response = await this.#fetch(this.#rpcUrl, {
         method: "POST",
@@ -210,7 +246,9 @@ export class ForkSimulator {
       );
     }
     if (payload.error !== undefined) {
-      throw new SimulationError(`${method}: ${payload.error.message ?? "rpc error"}`);
+      throw new SimulationError(`${method}: ${payload.error.message ?? "rpc error"}`, {
+        rpcError: payload.error,
+      });
     }
     return payload.result as T;
   }
@@ -236,14 +274,32 @@ export class ForkSimulator {
   async simulate(transaction: UnsignedTransaction): Promise<StateDiff> {
     const call = ForkSimulator.#callObject(transaction);
 
-    const blockNumber = Number(await this.#rpc<string>("eth_blockNumber", []));
+    const [rawNumber, block] = await Promise.all([
+      this.#rpc<string>("eth_blockNumber", []),
+      this.#rpc<{ timestamp?: string } | null>("eth_getBlockByNumber", ["latest", false]),
+    ]);
+    const blockNumber = Number(rawNumber);
+    const blockTimestamp =
+      typeof block?.timestamp === "string" ? Number.parseInt(block.timestamp, 16) : undefined;
 
     let revertReason: string | null = null;
     try {
       await this.#rpc<string>("eth_call", [call, "latest"]);
     } catch (error) {
-      revertReason =
-        error instanceof SimulationError ? error.message : String(error);
+      /*
+       * Only the node saying the execution failed is a revert.
+       *
+       * Every error used to be one, so a timeout on this call read as "the
+       * transaction reverts" — and R1 does not read a reverted diff, so an
+       * unlimited approval to an attacker came back `low` whenever the RPC was
+       * slow. A node that could not answer says nothing about the transaction:
+       * that is thrown, and a verdict that cannot simulate is refused.
+       */
+      if (error instanceof SimulationError && isExecutionFailure(error.rpcError)) {
+        revertReason = error.message;
+      } else {
+        throw error;
+      }
     }
 
     const trace = await this.#rpc<{
@@ -259,6 +315,7 @@ export class ForkSimulator {
       pre: toAccountMap(trace.pre),
       post: toAccountMap(trace.post),
       blockNumber,
+      ...(blockTimestamp === undefined ? {} : { blockTimestamp }),
       revertReason,
     };
   }
@@ -275,8 +332,12 @@ export class ForkSimulator {
   async call(address: Address, data: Hex): Promise<Hex | null> {
     try {
       return await this.#rpc<Hex>("eth_call", [{ to: address, data }, "latest"]);
-    } catch {
-      return null;
+    } catch (error) {
+      // A revert is an answer: the contract does not have that function. A
+      // timeout is not one, and reading it as "no" would let a slow node
+      // decide that a token has no supply or a proxy has no timelock.
+      if (error instanceof SimulationError && isExecutionFailure(error.rpcError)) return null;
+      throw error;
     }
   }
 

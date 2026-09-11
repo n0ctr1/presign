@@ -154,9 +154,11 @@ test("an age that could not be established is never read as fresh, nor as old", 
 
   const [finding] = outcome.findings!;
   // Inventing `high` out of an RPC timeout would mirror the fail-open this
-  // rule closes. An unknown age is treated like an old one: reported, not
-  // acted on, because there is no evidence to act on.
-  assert.equal(finding!.severity, "info");
+  // rule closes. Treating it like an old contract was the other mistake: a
+  // timeout on the age search turned a contract deployed an hour ago into
+  // `low`. Unknown is `warning`, which puts a human in front of it.
+  assert.equal(finding!.severity, "warning");
+  assert.match(finding!.title, /unknown age/);
   assert.equal(finding!.evidence["age_seconds"], null);
   assert.equal(finding!.evidence["origin_block"], null);
   assert.match(finding!.detail, /unknown rather than long/);

@@ -20,9 +20,12 @@ const ZERO = `0x${"0".repeat(64)}`;
 const word = (address: string) => `0x${address.slice(2).padStart(64, "0")}`;
 const uint = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
 
-function transaction(to: string | null = PROXY) {
-  return { from: AGENT, to, value: 0n, data: "0x", chainId: 1 } as UnsignedTransaction;
+function transaction(to: string | null = PROXY, value = 0n) {
+  return { from: AGENT, to, value, data: "0x", chainId: 1 } as UnsignedTransaction;
 }
+
+/** Sends the proxy value, which adds exposure to it. */
+const exposing = () => transaction(PROXY, 1n);
 
 const emptyDiff = {
   pre: {},
@@ -78,23 +81,35 @@ test("reports nothing for contract creation", async () => {
   assert.deepEqual(findings, []);
 });
 
+const usdcShape = {
+  storage: {
+    [ZEPPELINOS_IMPLEMENTATION_SLOT]: word(IMPL),
+    "0x10d6a54a4754c8869d6886b5f5d7fbfa5b4522237ea5c60d11bc4e7a1ff9390b": word(ADMIN),
+  },
+};
+
 test("an EOA admin is critical: one key, no delay, no notice", async () => {
   // USDC's real shape, confirmed on mainnet: a zeppelinos proxy whose admin
   // has no code at all.
-  const findings = await findingsOf(new MutableLogicRule(), 
-    context({
-      storage: {
-        [ZEPPELINOS_IMPLEMENTATION_SLOT]: word(IMPL),
-        "0x10d6a54a4754c8869d6886b5f5d7fbfa5b4522237ea5c60d11bc4e7a1ff9390b":
-          word(ADMIN),
-      },
-    }),
-  );
+  const findings = await findingsOf(new MutableLogicRule(), context(usdcShape, exposing()));
 
   assert.equal(findings.length, 1);
   assert.equal(findings[0]?.severity, "critical");
   assert.equal(findings[0]?.evidence["admin_is_contract"], false);
   assert.equal(findings[0]?.evidence["standard"], "zeppelinos");
+  assert.equal(findings[0]?.evidence["exposure_grows"], true);
+});
+
+test("the same admin is info for a call that adds no exposure", async () => {
+  // A transfer out of the wallet: the admin can still swap the code, but this
+  // call leaves the sender no more exposed to that than before, and making
+  // every stablecoin payment wait for a human would end autonomy.
+  const findings = await findingsOf(new MutableLogicRule(), context(usdcShape));
+
+  assert.equal(findings[0]?.severity, "info");
+  assert.equal(findings[0]?.evidence["control_severity"], "critical");
+  assert.equal(findings[0]?.evidence["exposure_grows"], false);
+  assert.match(String(findings[0]?.detail), /does not raise the tier/);
 });
 
 test("a timelock beyond the threshold downgrades to info", async () => {
@@ -124,7 +139,7 @@ test("a short timelock stays a warning", async () => {
       code: { [ADMIN]: "0x6080604052" },
       // Ten minutes protects nobody who is asleep.
       calls: { [`${ADMIN}:0xf27a0c92`]: uint(600n) },
-    }),
+    }, exposing()),
   );
 
   assert.equal(findings[0]?.severity, "warning");
@@ -139,7 +154,7 @@ test("a contract admin with no recognised timelock interface is a warning", asyn
         [EIP1967_ADMIN_SLOT]: word(ADMIN),
       },
       code: { [ADMIN]: "0x6080604052" },
-    }),
+    }, exposing()),
   );
 
   assert.equal(findings[0]?.severity, "warning");

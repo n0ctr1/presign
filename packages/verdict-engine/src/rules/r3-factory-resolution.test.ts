@@ -88,6 +88,7 @@ function protocol(options: { poolRow?: unknown } = {}) {
         queries.push(text);
         return Promise.resolve({
           liquidityPool: options.poolRow === undefined ? healthyPool : options.poolRow,
+          _meta: { block: { number: 25950000, timestamp: T0.getTime() / 1000 - 6 }, hasIndexingErrors: false },
         });
       },
     } as never,
@@ -110,7 +111,7 @@ test("a pool reaches the deployments indexing its factory, and is asked about by
   assert.equal(outcome.sources?.[0]?.deploymentId, "QmFactory");
   // This pool, not a sample of the protocol's largest pools.
   assert.equal(p.queries.length, 1);
-  assert.match(p.queries[0]!, new RegExp(`liquidityPool\\(id: "${POOL}"\\)`));
+  assert.match(p.queries[0]!, new RegExp(`liquidityPool\\(id: "${POOL}"[,)]`));
 });
 
 test("a breach in the resolved pool names the factory it was reached through", async () => {

@@ -20,6 +20,7 @@ import { keccak256, toHex, type Address, type Hex } from "viem";
 
 import { evaluated } from "../types.js";
 import type { Finding, Rule, RuleContext, RuleOutcome, StateDiff } from "../types.js";
+import { exposureGrowth } from "./exposure.js";
 
 /** `bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)`. */
 export const EIP1967_IMPLEMENTATION_SLOT =
@@ -248,16 +249,37 @@ export class MutableLogicRule implements Rule {
     if (this.#allowlist.has(proxy.admin)) return evaluated(findings);
 
     const control = await this.#classifyAdmin(context, proxy.admin);
+
+    /*
+     * Who controls the upgrade threatens whoever is exposed to this contract
+     * afterwards. A call that leaves the sender no more exposed — a USDC
+     * transfer out of the wallet — gets the finding at `info`: still reported,
+     * no longer a reason to wait for a human. A call that adds exposure keeps
+     * the full severity, and "adds" is read from the diff, so a deposit pulled
+     * in by `transferFrom` counts even with no approval and no ETH in sight.
+     *
+     * Only this finding is scaled. A recent upgrade is about the code this very
+     * call runs, and an upgrade inside the call is about the call itself.
+     */
+    const exposure = exposureGrowth(context.transaction, context.diff, address);
+    const severity = exposure.grows ? control.severity : "info";
+    const scaledDown = severity !== control.severity;
+
     findings.push({
       ruleId: this.id,
-      severity: control.severity,
+      severity,
       // True of every call to this contract, so it cannot by itself be the
       // reason to refuse this one.
       standing: true,
       title: control.title,
       detail:
         `${address} is a ${proxy.standard} proxy delegating to ${proxy.implementation}. ` +
-        `Its admin is ${proxy.admin}. ${control.detail}`,
+        `Its admin is ${proxy.admin}. ${control.detail}` +
+        (scaledDown
+          ? " This transaction neither sends it value, moves tokens into it, grants an " +
+            "allowance on it nor raises a balance it records for the sender, so it adds " +
+            "nothing to that exposure and does not raise the tier."
+          : ""),
       evidence: {
         proxy: address,
         standard: proxy.standard,
@@ -266,6 +288,9 @@ export class MutableLogicRule implements Rule {
         admin_is_contract: control.isContract,
         timelock_flavour: control.flavour,
         timelock_delay_seconds: control.delaySeconds,
+        control_severity: control.severity,
+        exposure_grows: exposure.grows,
+        exposure_reasons: exposure.reasons,
         upgrade_history: history.evidence,
       },
     });

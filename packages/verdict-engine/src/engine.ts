@@ -14,9 +14,11 @@ import {
   type Rule,
   type UnsignedTransaction,
   type Verdict,
+  type VerdictList,
   type VerdictSource,
 } from "./types.js";
 import type { ForkSimulator } from "./simulation/simulator.js";
+import { NO_EFFECTS, valueEffects } from "./simulation/effects.js";
 
 /** Severity a finding contributes before any ceiling is applied. */
 const SEVERITY_TIER: Readonly<Record<Finding["severity"], RiskTier>> = {
@@ -116,7 +118,9 @@ export class VerdictEngine {
       findings: [],
       provenance: {
         simulatedAtBlock: null,
+        simulatedBlockAgeSeconds: null,
         chainId: transaction.chainId,
+        lists: [],
         sources: [],
         unavailableRules: [
           { ruleId: "SIM", reason: "unsupported_chain", detail },
@@ -127,21 +131,28 @@ export class VerdictEngine {
           })),
         ],
       },
+      effects: NO_EFFECTS,
       evaluatedAt: this.#now().toISOString(),
     };
   }
 
   async #evaluate(transaction: UnsignedTransaction): Promise<Verdict> {
     const diff = await this.#simulator.simulate(transaction);
+    const effects = valueEffects(transaction, diff);
     const context = {
       transaction,
       diff,
+      effects,
       ...this.#simulator.asRuleReaders(),
     };
 
     const findings: Finding[] = [];
     const sources: VerdictSource[] = [];
+    const lists: VerdictList[] = [];
     const unavailableRules: { ruleId: string; reason: string; detail: string }[] = [];
+    const now = this.#now();
+    const secondsSince = (moment: number) =>
+      Math.max(0, Math.round((now.getTime() - moment) / 100) / 10);
 
     // Rules are independent, so one throwing must not lose the others'
     // conclusions. A rule that fails is treated as unavailable rather than as
@@ -174,18 +185,32 @@ export class VerdictEngine {
       }
       findings.push(...outcome.findings);
       sources.push(...(outcome.sources ?? []));
+      for (const list of outcome.lists ?? []) {
+        lists.push({
+          ...list,
+          ageSeconds: list.fetchedAt === null ? null : secondsSince(Date.parse(list.fetchedAt)),
+        });
+      }
     }
 
+    /*
+     * A revert is not a clean result.
+     *
+     * It used to be an `info` observation, and the verdict came back `low`:
+     * the rules that read what a transaction changes had nothing to read, and
+     * said so by finding nothing. That is a transaction not evaluated, not one
+     * found harmless — and a contract that reverts on the fork but succeeds on
+     * chain, keyed on gas price or a timestamp, is exactly how code hides from
+     * simulation. A definite finding elsewhere still outranks it.
+     */
     if (diff.revertReason !== null) {
-      findings.push({
+      unavailableRules.push({
         ruleId: "SIM",
-        severity: "info",
-        standing: false,
-        title: "Transaction reverts in simulation",
+        reason: "reverts_in_simulation",
         detail:
-          "This transaction fails when executed against current state, so it changes " +
-          "nothing on success paths. It will still consume gas if submitted.",
-        evidence: { revert_reason: diff.revertReason, derived_from: "simulation" },
+          "The transaction fails when executed against current state, so the rules that " +
+          "read what it changes had nothing to read. It is not evaluated, which is not the " +
+          `same as harmless. ${diff.revertReason}`,
       });
     }
 
@@ -195,11 +220,15 @@ export class VerdictEngine {
       findings,
       provenance: {
         simulatedAtBlock: diff.blockNumber,
+        simulatedBlockAgeSeconds:
+          diff.blockTimestamp === undefined ? null : secondsSince(diff.blockTimestamp * 1000),
         chainId: transaction.chainId,
         sources,
+        lists,
         unavailableRules,
       },
-      evaluatedAt: this.#now().toISOString(),
+      effects,
+      evaluatedAt: now.toISOString(),
     };
   }
 

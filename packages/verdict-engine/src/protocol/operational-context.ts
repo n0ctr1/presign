@@ -20,6 +20,7 @@ import type {
 } from "@presign/operational-layer";
 
 import type { Address } from "../types.js";
+import { LruMap } from "../util/lru-map.js";
 import type { ProbeOutcome, ProtocolContext } from "../rules/r3-invariant-breach.js";
 
 interface CachedProbe {
@@ -46,6 +47,11 @@ export interface OperationalProtocolContextOptions {
    * merely decides when to spend gateway quota refreshing it.
    */
   readonly probeTtlSeconds?: number;
+  /**
+   * Addresses and probes remembered at most. Callers choose the addresses,
+   * so an unbounded memo is memory anyone can fill with free quote requests.
+   */
+  readonly maxCacheEntries?: number;
   readonly now?: () => Date;
 }
 
@@ -56,10 +62,12 @@ export class OperationalProtocolContext implements ProtocolContext {
   readonly #gateway: GatewayClient;
   readonly #probeTtlSeconds: number;
   readonly #now: () => Date;
-  readonly #probes = new Map<string, CachedProbe>();
-  readonly #indexing = new Map<string, CachedIndexing>();
+  readonly #probes: LruMap<string, CachedProbe>;
+  readonly #indexing: LruMap<string, CachedIndexing>;
 
   constructor(options: OperationalProtocolContextOptions) {
+    this.#probes = new LruMap(options.maxCacheEntries ?? 2048);
+    this.#indexing = new LruMap(options.maxCacheEntries ?? 2048);
     this.#discovery = options.discovery;
     this.#conformance = options.conformance;
     this.#liveness = options.liveness;

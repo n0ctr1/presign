@@ -17,7 +17,10 @@ export type {
   Severity,
   StateDiff,
   UnsignedTransaction,
+  RuleList,
+  ValueEffects,
   Verdict,
+  VerdictList,
   VerdictProvenance,
   VerdictSource,
 } from "./types.js";
@@ -26,6 +29,17 @@ export { evaluated, TIER_ACTION } from "./types.js";
 
 export { AnvilFork, AnvilStartupError, type AnvilForkOptions } from "./simulation/fork.js";
 export { ForkSimulator, SimulationError } from "./simulation/simulator.js";
+export { NO_EFFECTS, valueEffects } from "./simulation/effects.js";
+export {
+  calldataAddresses,
+  mappingEntries,
+  MAX_ADDRESS_CANDIDATES,
+  MAX_MAPPING_SLOT,
+  nestedMappingEntries,
+  transactionAddresses,
+  type AddressCandidates,
+  type MappingEntry,
+} from "./simulation/mappings.js";
 export {
   resolveEthereumRpc,
   describeRpc,
@@ -35,7 +49,6 @@ export {
 } from "./simulation/rpc-url.js";
 
 export {
-  addressCandidates,
   allowanceSlot,
   UnlimitedApprovalRule,
   type UnlimitedApprovalRuleOptions,
@@ -50,6 +63,10 @@ export {
   type IncidentRegistryStatus,
   type ScamSnifferFeedOptions,
 } from "./incidents/incident-registry.js";
+
+export { exposureGrowth, type ExposureGrowth } from "./rules/exposure.js";
+export { plainText, quotedName } from "./rules/untrusted-text.js";
+export { LruMap } from "./util/lru-map.js";
 
 export {
   eip1967Slot,
@@ -67,7 +84,9 @@ export {
 export {
   CHAIN_TO_NETWORK,
   confirmedFactory,
+  countInvariantCandidates,
   InvariantBreachRule,
+  MAX_INVARIANT_CANDIDATES,
   type ConfirmedFactory,
   type InvariantBreachRuleOptions,
   type ProbeOutcome,

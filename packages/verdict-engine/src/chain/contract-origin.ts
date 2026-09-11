@@ -20,6 +20,7 @@
  */
 
 import type { Address } from "../types.js";
+import { LruMap } from "../util/lru-map.js";
 
 /**
  * Where the search stops looking precisely.
@@ -100,9 +101,10 @@ export class RpcContractOrigin implements ContractOriginSource {
   /**
    * An address's deployment does not change, so the answer is cached for the
    * life of the process. Without this, a demo calling the same counterparty
-   * four times pays for the search four times.
+   * four times pays for the search four times. Bounded, because callers pick
+   * the addresses.
    */
-  readonly #cache = new Map<string, ContractOrigin>();
+  readonly #cache = new LruMap<string, ContractOrigin>(10_000);
 
   constructor(options: RpcContractOriginOptions) {
     this.#url = options.url;
@@ -175,7 +177,10 @@ export class RpcContractOrigin implements ContractOriginSource {
     if (cached !== undefined) return cached;
 
     const origin = await this.#search(address);
-    this.#cache.set(key, origin);
+    // An age that could not be established is not an answer about the
+    // address, only about one attempt to ask. Caching it made a single timeout
+    // permanent for the life of the process.
+    if (origin.status !== "indeterminate") this.#cache.set(key, origin);
     return origin;
   }
 

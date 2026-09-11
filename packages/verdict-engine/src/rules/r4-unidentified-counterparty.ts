@@ -357,13 +357,25 @@ export class UnidentifiedCounterpartyRule implements Rule {
 
     return {
       ruleId: this.id,
-      severity: age.fresh ? "critical" : "info",
+      /*
+       * An age that could not be established is `warning`, not `info`. It used
+       * to be `info`, so an RPC timeout on the age search turned an unindexed
+       * contract deployed an hour ago from `high` into `low` — the absence of
+       * evidence read as evidence of age.
+       */
+      severity: age.fresh
+        ? "critical"
+        : origin.status === "indeterminate"
+          ? "warning"
+          : "info",
       // True of every call to this counterparty, not of this one in
       // particular. Uncapped by policy all the same; see the file header.
       standing: true,
       title: age.fresh
         ? `Unidentified ${delegated ? "delegate" : "contract"}, deployed ${age.short}`
-        : `Counterparty${delegated ? "'s delegate" : ""} is not indexed by any known deployment`,
+        : origin.status === "indeterminate"
+          ? `Unidentified ${delegated ? "delegate" : "contract"} of unknown age`
+          : `Counterparty${delegated ? "'s delegate" : ""} is not indexed by any known deployment`,
       detail:
         `No deployment in the subgraph registry indexes ${subjectPhrase} so nothing ` +
         `independent describes what this contract is. ${age.sentence} ${selectorNote}`,
@@ -410,8 +422,8 @@ export class UnidentifiedCounterpartyRule implements Rule {
    *
    * An indeterminate age is deliberately not treated as old. It is also not
    * treated as fresh — inventing a `high` verdict out of an RPC timeout would
-   * be the mirror of the fail-open this rule was written to close, and medium
-   * already puts the transaction in front of a human.
+   * be the mirror of the fail-open this rule was written to close. The finding
+   * is `warning`, which puts the transaction in front of a human.
    */
   #describeAge(origin: ContractOrigin): {
     readonly fresh: boolean;

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createApp, createMeter, FACILITATORS, parseJournalMode } from "../dist/index.js";
+import {
+  createApp,
+  createMeter,
+  DEMO_BUDGETS,
+  DEMO_EXAMPLES,
+  FACILITATORS,
+  parseJournalMode,
+  publicRequest,
+} from "../dist/index.js";
 import type { Meter } from "../dist/index.js";
 import type { PresignPipeline } from "@presign/gateway";
 import { InMemoryVerdictJournal } from "@presign/hedera";
@@ -50,6 +58,95 @@ const appWith = (full?: PresignPipeline, meter?: Meter) =>
     // failing test cannot depend on someone else's uptime.
     facilitatorUrl: "http://127.0.0.1:9",
   });
+
+test("behind a TLS proxy, a request carries the scheme callers actually used", async () => {
+  const proxied = new Request("http://presign.dev/verdict/local", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
+    body,
+  });
+
+  const rewritten = publicRequest(proxied);
+
+  // The x402 middleware copies this URL into the payment manifest, which used
+  // to advertise an http endpoint for a service whose own broker refuses one.
+  assert.equal(rewritten.url, "https://presign.dev/verdict/local");
+  assert.equal(rewritten.method, "POST");
+  assert.deepEqual(await rewritten.json(), JSON.parse(body));
+
+  // Nothing to upgrade: the request is passed through untouched.
+  const direct = new Request("http://127.0.0.1:4021/health");
+  assert.equal(publicRequest(direct), direct);
+});
+
+test("the landing page's examples are cached, and a stale answer says its age", async () => {
+  let calls = 0;
+  let failing = false;
+  let clock = 1_700_000_000_000;
+  const verdict = {
+    tier: "low",
+    action: "",
+    findings: [],
+    provenance: { simulatedAtBlock: 1, chainId: 1, sources: [], lists: [], unavailableRules: [] },
+    effects: { observed: true, ethOutWei: "0", ethRecipients: [], tokensOut: [] },
+    evaluatedAt: "2026-09-12T00:00:00Z",
+  };
+  const app = createApp({
+    pipelines: { local: pipeline("low") },
+    journal,
+    payTo: "0.0.10398276",
+    network: "hedera:testnet",
+    chainIds: [1],
+    facilitatorUrl: "http://127.0.0.1:9",
+    demo: {
+      examples: DEMO_EXAMPLES,
+      budgets: DEMO_BUDGETS,
+      ttlSeconds: 45,
+      now: () => clock,
+      evaluate: () => {
+        calls += 1;
+        return failing
+          ? Promise.reject(new Error("the fork is gone"))
+          : Promise.resolve(verdict as never);
+      },
+    },
+  });
+  const ask = async (query: string) => {
+    const response = await app.request(`/demo/verdict?${query}`);
+    return { status: response.status, body: (await response.json()) as Record<string, never> };
+  };
+
+  const first = await ask("example=aave-pool&budget=30");
+  assert.equal(first.status, 200);
+  assert.equal((first.body["verdict"] as { tier: string }).tier, "low");
+
+  // A thousand readers inside the window cost the gateway what one does.
+  clock += 10_000;
+  const second = await ask("example=aave-pool&budget=30");
+  assert.equal(calls, 1);
+  assert.equal((second.body["computed"] as { age_seconds: number }).age_seconds, 10);
+
+  /*
+   * Past the window it is recomputed, and when that fails the last real answer
+   * is served with its age instead of an error — the rule this service sells,
+   * applied to its own output.
+   */
+  clock += 60_000;
+  failing = true;
+  const stale = await ask("example=aave-pool&budget=30");
+  assert.equal(stale.status, 200);
+  assert.equal(calls, 2);
+  const computed = stale.body["computed"] as { age_seconds: number; could_not_refresh?: string };
+  assert.equal(computed.age_seconds, 70);
+  assert.match(String(computed.could_not_refresh), /the fork is gone/);
+
+  // Fixed by construction: an example nobody defined, a budget nobody built.
+  assert.equal((await ask("example=aave-pool&budget=7")).status, 400);
+  assert.equal((await ask("example=nope&budget=30")).status, 404);
+
+  // Nothing cached and nothing computable is an error, never an invented verdict.
+  assert.equal((await ask("example=usdc-transfer&budget=30")).status, 503);
+});
 
 test("health reports whether a verdict could be produced, not that the process started", async () => {
   const app = createApp({

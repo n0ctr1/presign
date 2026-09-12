@@ -5,8 +5,8 @@
  * verdict actually buys.
  */
 
-export { createApp, FACILITATORS } from "./app.js";
-export type { HealthSource, HederaNetwork, ServiceOptions } from "./app.js";
+export { createApp, publicRequest, FACILITATORS } from "./app.js";
+export type { DemoOptions, HealthSource, HederaNetwork, ServiceOptions } from "./app.js";
 export { parseJournalMode, type JournalMode } from "./app.js";
 export {
   parseRules,
@@ -28,3 +28,5 @@ export { readTopicId, writeTopicId } from "./state.js";
 export { createRateLimiter, type RateLimiter, type RateLimiterOptions } from "./rate-limit.js";
 
 export { buildRegistryClient, splitArgs } from "./registry.js";
+
+export { DEMO_BUDGETS, DEMO_EXAMPLES, type DemoExample } from "./demo.js";

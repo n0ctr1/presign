@@ -48,7 +48,8 @@ import { buildRegistryClient } from "./registry.js";
 
 import { ProxyUpgradeIndex } from "@presign/substreams";
 
-import { createApp, FACILITATORS, type HederaNetwork } from "./app.js";
+import { createApp, publicRequest, FACILITATORS, type HederaNetwork, type DemoOptions } from "./app.js";
+import { DEMO_BUDGETS, DEMO_EXAMPLES } from "./demo.js";
 import { createMeter, type Meter } from "./pricing.js";
 import { readTopicId, writeTopicId } from "./state.js";
 
@@ -264,6 +265,7 @@ async function main(): Promise<void> {
   let full: PresignPipeline | undefined;
   let closeRegistry: (() => void) | undefined;
   let meter: Meter | undefined;
+  let demo: DemoOptions | undefined;
   try {
     /*
      * How gateway queries are funded.
@@ -316,25 +318,53 @@ async function main(): Promise<void> {
       }),
       gateway,
     });
-    full = new PresignPipeline({
-      engine: new VerdictEngine({
-        simulator,
-        rules: [
-          ...rules(),
-          new InvariantBreachRule({ protocol }),
-          // R4 shares the registry adapter R3 already builds. It is scoped to
-          // this route for the same reason R3 is: without the registry the
-          // process cannot tell an unindexed contract from an unreachable
-          // lookup, and guessing between those is the failure the rule exists
-          // to prevent.
-          new UnidentifiedCounterpartyRule({
-            directory: protocol,
-            origin: new RpcContractOrigin({ url: rpc.url }),
-          }),
-        ],
+    // One origin cache for every engine below: an address's deployment does
+    // not change, and the search behind it is a bisection over archive reads.
+    const origin = new RpcContractOrigin({ url: rpc.url });
+    const fullRules = (maxLagSeconds?: number) => [
+      ...rules(),
+      new InvariantBreachRule({
+        protocol,
+        ...(maxLagSeconds === undefined ? {} : { maxLagSeconds }),
       }),
+      // R4 shares the registry adapter R3 already builds. It is scoped to
+      // this route for the same reason R3 is: without the registry the
+      // process cannot tell an unindexed contract from an unreachable
+      // lookup, and guessing between those is the failure the rule exists
+      // to prevent.
+      new UnidentifiedCounterpartyRule({ directory: protocol, origin }),
+    ];
+    full = new PresignPipeline({
+      engine: new VerdictEngine({ simulator, rules: fullRules() }),
     });
     console.log("  R3 and R4 enabled — /verdict/full is offered");
+
+    /*
+     * The landing page's examples, one engine per freshness budget.
+     *
+     * The budget belongs to the rule, so showing that the same call answers
+     * inside thirty seconds and refuses inside one means holding both rules at
+     * once. They share the simulator, the registry adapter and the origin
+     * cache, so the extra engines cost objects rather than work.
+     */
+    const demoEngines = new Map(
+      DEMO_BUDGETS.map((seconds) => [
+        seconds,
+        new VerdictEngine({ simulator, rules: fullRules(seconds) }),
+      ]),
+    );
+    demo = {
+      examples: DEMO_EXAMPLES,
+      budgets: DEMO_BUDGETS,
+      evaluate: (transaction, budgetSeconds) => {
+        const engine = demoEngines.get(budgetSeconds);
+        if (engine === undefined) {
+          return Promise.reject(new RangeError(`no engine for a ${budgetSeconds}s budget`));
+        }
+        return engine.evaluate(transaction);
+      },
+    };
+    console.log(`  live examples on /demo/verdict at ${DEMO_BUDGETS.join(", ")}s budgets`);
 
     // Priced by the deployments R3 will read, counted with the rule's own
     // selection against the registry and the fork — never the metered gateway.
@@ -356,6 +386,7 @@ async function main(): Promise<void> {
 
   const app = createApp({
     ...(usingX402 ? { ledger } : {}),
+    ...(demo === undefined ? {} : { demo }),
     pipelines: full === undefined ? { local } : { local, full },
     sources: () => {
       const { loaded, ...feed } = incidents.status();
@@ -402,7 +433,13 @@ async function main(): Promise<void> {
     ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
   });
 
-  const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+  const server = serve({
+    // The proxy terminates TLS, so the scheme it forwards is the one callers
+    // used; without it the payment manifest advertises an http endpoint.
+    fetch: (request: Request) => app.fetch(publicRequest(request)),
+    port,
+    hostname: host,
+  }, (info) => {
     const reachable =
       info.address === "::" || info.address === "0.0.0.0"
         ? "all interfaces"

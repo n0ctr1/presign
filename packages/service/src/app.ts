@@ -32,7 +32,7 @@ import { ExactHederaScheme } from "@x402/hedera/exact/server";
 
 import type { PresignPipeline } from "@presign/gateway";
 import { commitTransaction, newSalt, type VerdictJournal } from "@presign/hedera";
-import { LruMap, type UnsignedTransaction } from "@presign/verdict-engine";
+import { LruMap, type UnsignedTransaction, type Verdict } from "@presign/verdict-engine";
 
 import {
   parseRules,
@@ -47,6 +47,7 @@ import {
   type RuleId,
 } from "./pricing.js";
 import { createRateLimiter } from "./rate-limit.js";
+import type { DemoExample } from "./demo.js";
 
 export type HederaNetwork = "hedera:testnet" | "hedera:mainnet";
 
@@ -131,6 +132,50 @@ export interface ServiceOptions {
    * unknown here, not that it is zero.
    */
   readonly ledger?: PaymentLedger;
+  /**
+   * The landing page's live examples. Omit and the routes do not exist.
+   *
+   * Free, and bounded by construction rather than by a rate limit somebody has
+   * to trust: a fixed set of transactions, a fixed set of budgets, one cached
+   * answer per pair.
+   */
+  readonly demo?: DemoOptions;
+}
+
+export interface DemoOptions {
+  readonly examples: readonly DemoExample[];
+  /** Freshness budgets a caller may ask for, in seconds. */
+  readonly budgets: readonly number[];
+  readonly evaluate: (
+    transaction: UnsignedTransaction,
+    budgetSeconds: number,
+  ) => Promise<Verdict>;
+  /** How long one answer is reused. Defaults to 45 seconds. */
+  readonly ttlSeconds?: number;
+  readonly now?: () => number;
+}
+
+/**
+ * The request as the public saw it, not as the proxy relayed it.
+ *
+ * The service speaks plain HTTP behind a TLS proxy, so every URL Hono sees
+ * begins `http://` — including the one the x402 middleware copies into the
+ * payment manifest, which then advertised an `http` endpoint for a service
+ * whose own broker refuses anything but `https`. Only an upgrade is honoured:
+ * a forged header can claim the scheme the proxy already uses and nothing else.
+ */
+export function publicRequest(request: Request): Request {
+  const forwarded = request.headers.get("x-forwarded-proto");
+  const scheme = forwarded === null ? null : forwarded.split(",")[0]!.trim();
+  if (scheme !== "https" || !request.url.startsWith("http://")) return request;
+  return new Request(`https://${request.url.slice("http://".length)}`, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+    signal: request.signal,
+    // Node needs this whenever a streamed body is passed along.
+    duplex: "half",
+  } as RequestInit);
 }
 
 /**
@@ -501,6 +546,133 @@ export function createApp(options: ServiceOptions): PresignApp {
       })),
     }, ready.ok ? 200 : 503);
   });
+
+  /*
+   * The landing page's live examples.
+   *
+   * Three fixed transactions, a handful of freshness budgets, and one answer
+   * cached per pair for a minute: a thousand readers cost the gateway what two
+   * do. When a refresh fails — the fork gone, a probe unreachable — the last
+   * real answer is served with its age rather than an error, which is the same
+   * rule this service sells applied to its own output: say how old the
+   * evidence is and let the reader judge it.
+   */
+  const demo = options.demo;
+  if (demo !== undefined) {
+    const demoTtl = (demo.ttlSeconds ?? 45) * 1000;
+    const demoNow = demo.now ?? Date.now;
+    const answers = new LruMap<string, { verdict: Verdict; computedAt: number }>(64);
+    const running = new Map<string, Promise<{ verdict: Verdict; computedAt: number }>>();
+    const demoLimiter = createRateLimiter({ perMinute: 60 });
+
+    const described = (example: DemoExample) => ({
+      id: example.id,
+      title: example.title,
+      detail: example.detail,
+      budget_matters: example.budgetMatters,
+      transaction: {
+        from: example.transaction.from,
+        to: example.transaction.to,
+        value: example.transaction.value.toString(),
+        data: example.transaction.data,
+        chain_id: example.transaction.chainId,
+      },
+    });
+
+    app.get("/demo/examples", (c) =>
+      c.json({
+        budgets: demo.budgets,
+        default_budget: demo.budgets[demo.budgets.length - 1],
+        examples: demo.examples.map(described),
+        note: "Fixed examples, evaluated live on this instance. Agents send their own transactions to the paid routes; see /llms.txt.",
+      }),
+    );
+
+    app.get("/demo/verdict", async (c) => {
+      const example = demo.examples.find((entry) => entry.id === c.req.query("example"));
+      if (example === undefined) {
+        return c.json(
+          {
+            error: "unknown_example",
+            message: "This endpoint answers for a fixed set of transactions.",
+            examples: demo.examples.map((entry) => entry.id),
+          },
+          404,
+        );
+      }
+
+      const asked = c.req.query("budget");
+      const budget =
+        asked === undefined ? demo.budgets[demo.budgets.length - 1]! : Number(asked);
+      if (!demo.budgets.includes(budget)) {
+        return c.json(
+          { error: "unsupported_budget", message: "Freshness budgets are fixed.", budgets: demo.budgets },
+          400,
+        );
+      }
+
+      const taken = demoLimiter.take(clientOf(c.req.header("x-forwarded-for")));
+      if (!taken.ok) {
+        c.header("Retry-After", String(taken.retryAfterSeconds));
+        return c.json(
+          { error: "rate_limited", retry_after_seconds: taken.retryAfterSeconds },
+          429,
+        );
+      }
+
+      const key = `${example.id}:${budget}`;
+      const held = answers.get(key);
+      let answer = held !== undefined && demoNow() - held.computedAt < demoTtl ? held : undefined;
+      let staleBecause: string | null = null;
+
+      if (answer === undefined) {
+        let pending = running.get(key);
+        if (pending === undefined) {
+          pending = demo
+            .evaluate(example.transaction, budget)
+            .then((verdict) => ({ verdict, computedAt: demoNow() }));
+          running.set(key, pending);
+          void pending.then(
+            () => running.delete(key),
+            () => running.delete(key),
+          );
+        }
+        try {
+          answer = await pending;
+          answers.set(key, answer);
+        } catch (error) {
+          // A verdict of `unavailable` is an answer and lands above. This is
+          // the other case: nothing could be evaluated at all.
+          if (held === undefined) {
+            return c.json(
+              {
+                error: "demo_unavailable",
+                message: "This instance could not evaluate the example just now, and has no earlier answer to show.",
+                detail: error instanceof Error ? error.message : String(error),
+              },
+              503,
+            );
+          }
+          answer = held;
+          staleBecause = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const ageSeconds = Math.max(0, Math.round((demoNow() - answer.computedAt) / 100) / 10);
+      return c.json({
+        example: described(example),
+        budget_seconds: budget,
+        verdict: answer.verdict,
+        // The page states the age of its own answer, which is the whole claim
+        // this service makes about anybody else's.
+        computed: {
+          at: new Date(answer.computedAt).toISOString(),
+          age_seconds: ageSeconds,
+          ...(staleBecause === null ? {} : { could_not_refresh: staleBecause }),
+        },
+      });
+    });
+  }
 
   /** One payment option per route: HBAR on the configured network. */
   const hbarAmount = (tinybars: bigint) => ({ asset: "0.0.0", amount: tinybars.toString() });

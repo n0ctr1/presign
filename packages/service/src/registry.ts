@@ -33,13 +33,29 @@ export interface RegistryClientOptions {
  * the build. An image installs the package and points `REGISTRY_COMMAND` at
  * the binary, so the registry is present before anything asks it a question.
  */
+/**
+ * Split a command line the way a shell would for the simple cases.
+ *
+ * Splitting on spaces alone turned a path with a space in it into two
+ * arguments, and the registry then failed to start complaining about a file
+ * nobody had named.
+ */
+export function splitArgs(line: string): string[] {
+  const args: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  for (let match = pattern.exec(line); match !== null; match = pattern.exec(line)) {
+    args.push(match[1] ?? match[2] ?? match[3] ?? "");
+  }
+  return args;
+}
+
 export function buildRegistryClient(options: RegistryClientOptions = {}): RegistryClient {
   const command = options.command ?? process.env["REGISTRY_COMMAND"] ?? "npx";
   const args =
     options.args ??
     (process.env["REGISTRY_ARGS"] === undefined
       ? ["-y", REGISTRY_PACKAGE]
-      : process.env["REGISTRY_ARGS"].split(" ").filter((a) => a !== ""));
+      : splitArgs(process.env["REGISTRY_ARGS"]));
 
   return new RegistrySubprocess({ command, args, clientName: "presign-service" });
 }

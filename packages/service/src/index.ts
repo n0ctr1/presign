@@ -26,3 +26,5 @@ export type { Meter, MeteredQuote, MeterOptions, Quote, RuleId } from "./pricing
 // is building, which is the failure this file exists to prevent.
 export { readTopicId, writeTopicId } from "./state.js";
 export { createRateLimiter, type RateLimiter, type RateLimiterOptions } from "./rate-limit.js";
+
+export { buildRegistryClient, splitArgs } from "./registry.js";

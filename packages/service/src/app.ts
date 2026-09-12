@@ -94,6 +94,13 @@ export interface ServiceOptions {
   readonly pipelines: ServicePipelines;
   /** Reported by /health. Evaluated per request, not cached. */
   readonly sources?: () => readonly HealthSource[];
+  /**
+   * Whether a verdict could be produced right now, asked on every /health.
+   *
+   * Without it /health answered ok: true whatever had died, so a container
+   * healthcheck stayed green while anvil was gone and every verdict was a 503.
+   */
+  readonly ready?: () => Promise<{ ok: boolean; detail?: string }>;
   readonly journal: VerdictJournal;
   /** Hedera account that receives payment. */
   readonly payTo: string;
@@ -248,7 +255,13 @@ function parseTransaction(body: VerdictRequestBody): UnsignedTransaction {
   };
 }
 
-export function createApp(options: ServiceOptions): Hono {
+/** The service app, plus a way to let asynchronous journal writes finish. */
+export interface PresignApp extends Hono {
+  /** Resolves when no asynchronous journal write is outstanding, or on timeout. */
+  drainJournal(timeoutMs?: number): Promise<void>;
+}
+
+export function createApp(options: ServiceOptions): PresignApp {
   /*
    * Journal writes that failed after their response had already gone out.
    * Counted because an asynchronous write has nobody left to tell: the caller
@@ -256,6 +269,14 @@ export function createApp(options: ServiceOptions): Hono {
    * response went on looking exactly as healthy as before.
    */
   let journalFailures = 0;
+  /*
+   * Asynchronous journal writes still in flight.
+   *
+   * They outlive the response that returned `queued`, so on shutdown they are
+   * the one piece of state nobody else holds: the caller has their salt and
+   * the entry is not on the topic yet.
+   */
+  const pendingWrites = new Set<Promise<void>>();
 
   const app = new Hono();
 
@@ -438,9 +459,17 @@ export function createApp(options: ServiceOptions): Hono {
     }
   });
 
-  app.get("/health", (c) =>
-    c.json({
-      ok: true,
+  app.get("/health", async (c) => {
+    /*
+     * `ok` is a claim about whether a verdict can be produced right now, not
+     * about the process having started. The probe asks the fork, without which
+     * nothing else matters; data sources stay informational, because a rule
+     * reporting its data unavailable is a working service refusing to guess.
+     */
+    const ready = (await options.ready?.()) ?? { ok: true };
+    return c.json({
+      ok: ready.ok,
+      ...(ready.detail === undefined ? {} : { not_ready: ready.detail }),
       network: options.network,
       payTo: options.payTo,
       facilitator: facilitatorUrl,
@@ -454,6 +483,7 @@ export function createApp(options: ServiceOptions): Hono {
         // Zero is the expected reading. Anything else means entries were lost
         // after their response had already been sent.
         failed_async_writes: journalFailures,
+        pending_async_writes: pendingWrites.size,
       },
       upstream_spend:
         options.ledger === undefined
@@ -469,8 +499,8 @@ export function createApp(options: ServiceOptions): Hono {
         live: source.live,
         ...(source.detail ?? {}),
       })),
-    }),
-  );
+    }, ready.ok ? 200 : 503);
+  });
 
   /** One payment option per route: HBAR on the configured network. */
   const hbarAmount = (tinybars: bigint) => ({ asset: "0.0.0", amount: tinybars.toString() });
@@ -760,16 +790,20 @@ export function createApp(options: ServiceOptions): Hono {
       const salt = newSalt();
       let journalled: Record<string, unknown>;
       if (journalMode === "async") {
-        void options.journal
-          .record(transaction, outcome.verdict, salt)
-          .catch((error: unknown) => {
+        const write = (async () => {
+          try {
+            await options.journal.record(transaction, outcome.verdict, salt);
+          } catch (error: unknown) {
             journalFailures += 1;
             console.error(
               `  journal write failed after responding: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             );
-          });
+          }
+        })();
+        pendingWrites.add(write);
+        void write.finally(() => pendingWrites.delete(write));
         journalled = {
           mode: "async",
           topic: options.journal.topicId,
@@ -842,5 +876,15 @@ export function createApp(options: ServiceOptions): Hono {
     );
   }
 
-  return app;
+  const api = app as PresignApp;
+  api.drainJournal = async (timeoutMs = 10_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (pendingWrites.size > 0 && Date.now() < deadline) {
+      await Promise.race([
+        Promise.allSettled([...pendingWrites]),
+        new Promise((resolve) => setTimeout(resolve, 250)),
+      ]);
+    }
+  };
+  return api;
 }

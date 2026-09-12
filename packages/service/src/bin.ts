@@ -85,8 +85,25 @@ const readSecret = async (fileName: string): Promise<string> => {
 };
 
 
+/**
+ * Read HEDERA_NETWORK, or refuse to start.
+ *
+ * The value used to be cast. "mainnet" without the prefix then chose testnet
+ * secrets and a mainnet x402 network, and the facilitator lookup came back
+ * undefined several frames later, where the cause was no longer visible.
+ */
+function parseNetwork(raw: string | undefined): HederaNetwork {
+  const value = (raw ?? "hedera:testnet").trim();
+  if (value !== "hedera:testnet" && value !== "hedera:mainnet") {
+    throw new RangeError(
+      `HEDERA_NETWORK must be hedera:testnet or hedera:mainnet; got "${value}"`,
+    );
+  }
+  return value;
+}
+
 async function main(): Promise<void> {
-  const network = (process.env["HEDERA_NETWORK"] ?? "hedera:testnet") as HederaNetwork;
+  const network = parseNetwork(process.env["HEDERA_NETWORK"]);
   const short = network === "hedera:mainnet" ? "mainnet" : "testnet";
   const port = Number(process.env["PORT"] ?? 4021);
   /*
@@ -130,7 +147,14 @@ async function main(): Promise<void> {
         `Put an archive URL in ~/.presign/secrets/ethereum__rpc-url.`,
     );
   }
-  const fork = await AnvilFork.start({ forkUrl: rpc.url, port: 8545 });
+  const anvilPort = process.env["ANVIL_PORT"];
+  const fork = await AnvilFork.start({
+    forkUrl: rpc.url,
+    // A port the OS says is free unless one is named. On a fixed port, another
+    // node already listening would answer the readiness check and every
+    // verdict would be simulated against a chain this process does not own.
+    ...(anvilPort === undefined ? {} : { port: Number(anvilPort) }),
+  });
   /*
    * The fork re-forks once it falls behind.
    *
@@ -278,7 +302,10 @@ async function main(): Promise<void> {
       ...(choice.funding.kind === "x402" ? { timeoutMs: 12_000 } : {}),
     });
     const registry = buildRegistryClient();
-    closeRegistry = registry.close;
+    // Bound, not handed over as a bare method: `close` reads private fields,
+    // and calling it detached threw on every shutdown, so nothing after it in
+    // the sequence ran and the process died with a stack trace instead.
+    closeRegistry = () => registry.close();
     const discovery = new SubgraphRegistrySource(registry);
     const protocol = new OperationalProtocolContext({
       discovery,
@@ -352,11 +379,30 @@ async function main(): Promise<void> {
     payTo: operatorId,
     network,
     chainIds: [chainId],
+    ready: async () => {
+      // The fork, asked directly rather than assumed from startup having
+      // succeeded: it is the part without which no verdict exists at all.
+      try {
+        const response = await fetch(fork.rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (response.ok) return { ok: true };
+      } catch {
+        // Reported below, in the same words either way.
+      }
+      return {
+        ok: false,
+        detail: "the simulation fork is not answering, so no verdict can be produced",
+      };
+    },
     ...(meter === undefined ? {} : { meter }),
     ...(facilitatorOverride === undefined ? {} : { facilitatorUrl: facilitatorOverride }),
   });
 
-  serve({ fetch: app.fetch, port, hostname: host }, (info) => {
+  const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
     const reachable =
       info.address === "::" || info.address === "0.0.0.0"
         ? "all interfaces"
@@ -371,13 +417,50 @@ async function main(): Promise<void> {
     );
   });
 
+  /*
+   * Shutdown in order: stop accepting, let the requests in flight finish, then
+   * let queued journal writes land.
+   *
+   * Exiting at once dropped both. A verdict in flight became a dead socket for
+   * whoever had just paid for it, and a queued entry was lost with its salt
+   * already handed out — the one piece of state nobody else holds a copy of.
+   */
+  let stopping = false;
+  const stop = () => {
+    const steps: readonly (readonly [string, () => void])[] = [
+      ["upgrade stream", () => upgrades?.stop()],
+      ["incident registry", () => incidents.stop()],
+      ["registry subprocess", () => closeRegistry?.()],
+      ["fork", () => fork.stop()],
+      ["journal", () => journal.close()],
+    ];
+    for (const [what, close] of steps) {
+      try {
+        close();
+      } catch (error) {
+        // One resource refusing to close must not leave the others running,
+        // nor turn a clean shutdown into a crash.
+        console.error(
+          `  could not stop the ${what}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  };
   const shutdown = () => {
-    upgrades?.stop();
-    incidents.stop();
-    closeRegistry?.();
-    fork.stop();
-    journal.close();
-    process.exit(0);
+    if (stopping) return;
+    stopping = true;
+    console.log("\nshutting down: refusing new requests, finishing the ones in flight…");
+    const done = () => {
+      stop();
+      process.exit(0);
+    };
+    // A ceiling on politeness: a held-open connection must not keep the
+    // process alive past what an orchestrator waits before killing it.
+    const hard = setTimeout(done, 15_000);
+    hard.unref?.();
+    server.close(() => {
+      void app.drainJournal(8_000).then(done, done);
+    });
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

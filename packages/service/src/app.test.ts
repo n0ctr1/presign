@@ -51,6 +51,27 @@ const appWith = (full?: PresignPipeline, meter?: Meter) =>
     facilitatorUrl: "http://127.0.0.1:9",
   });
 
+test("health reports whether a verdict could be produced, not that the process started", async () => {
+  const app = createApp({
+    pipelines: { local: pipeline("low") },
+    journal,
+    payTo: "0.0.10398276",
+    network: "hedera:testnet",
+    chainIds: [1],
+    facilitatorUrl: "http://127.0.0.1:9",
+    ready: () => Promise.resolve({ ok: false, detail: "the simulation fork is not answering" }),
+  });
+
+  const response = await app.request("/health");
+  const body = (await response.json()) as { ok: boolean; not_ready?: string };
+
+  // A healthcheck green while anvil is dead is worse than none at all: the
+  // container looks fine and every verdict is a 503.
+  assert.equal(response.status, 503);
+  assert.equal(body.ok, false);
+  assert.match(String(body.not_ready), /fork/);
+});
+
 test("a chain id this instance does not serve is refused on /quote, not priced", async () => {
   const app = appWith(pipeline("low"), createMeter({ count: () => Promise.resolve(2) }));
 

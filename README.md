@@ -589,6 +589,8 @@ packages/substreams          proxy upgrade history, streamed from Substreams
 packages/secrets             credential resolution with declared provenance
 docs/feedback/               per-partner tooling feedback, written as we go
 docs/setup/                  device and environment runbooks
+docs/AI_USAGE.md             what was decided by hand, what an AI tool typed
+prompts/                     the specification each phase was built from
 ```
 
 ### Running it

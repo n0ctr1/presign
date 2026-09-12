@@ -146,6 +146,22 @@ async function main(): Promise<void> {
     exit(1);
   }
 
+  const unavailable = tiers.get("unavailable") ?? 0;
+  if (unavailable > 0) {
+    /*
+     * Said plainly, because a reader counting rows sees eleven passes and one
+     * failure. It is neither: a deployment that speaks for this counterparty
+     * was too slow or too far behind head, and a verdict resting on data we
+     * could not get is the one thing this service will not sell. The row is
+     * the product working.
+     */
+    console.log(
+      `\n${unavailable} came back unavailable: no deployment could answer for it within the ` +
+        "freshness budget. That is not a failed check — it is the refusal this project exists " +
+        "to make, and the agent is told the counterparty was never evaluated.",
+    );
+  }
+
   console.log(
     "\nNone reached high. A medium here would need a reason — an upgradeable proxy the call adds " +
       "exposure to — and a view call adds none.",

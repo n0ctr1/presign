@@ -9,6 +9,7 @@ import {
   createPayer,
   formatTinybars,
   hbarToTinybars,
+  parseHederaNetwork,
   resolveKey,
   type Payer,
 } from "@presign/payer";
@@ -29,8 +30,7 @@ import { createVerdictServer, type VerdictServerConfig } from "./server.js";
 // frame corrupts the stream, so every diagnostic goes to stderr.
 const say = (line: string) => process.stderr.write(`presign-verdict-mcp: ${line}\n`);
 
-const network = process.env["HEDERA_NETWORK"] ?? "hedera:testnet";
-const short = network === "hedera:mainnet" ? "mainnet" : "testnet";
+const { network, short } = parseHederaNetwork(process.env["HEDERA_NETWORK"]);
 const baseUrl = process.env["PRESIGN_URL"] ?? "https://presign.dev";
 
 /*

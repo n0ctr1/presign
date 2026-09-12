@@ -24,6 +24,31 @@ export { PrivateKey };
 
 export const TINYBARS_PER_HBAR = 100_000_000n;
 
+/** Hedera networks this client can pay on, as x402 names them. */
+export const HEDERA_NETWORKS = ["hedera:testnet", "hedera:mainnet"] as const;
+export type HederaCaipNetwork = (typeof HEDERA_NETWORKS)[number];
+
+/**
+ * Read HEDERA_NETWORK, or refuse to start.
+ *
+ * The value used to be cast. "mainnet" without the prefix then selected
+ * testnet secrets and a mainnet x402 network at once, and the mismatch
+ * surfaced later as a facilitator that did not exist.
+ */
+export function parseHederaNetwork(raw: string | undefined): {
+  network: HederaCaipNetwork;
+  short: "testnet" | "mainnet";
+} {
+  const value = (raw ?? "hedera:testnet").trim();
+  if (!(HEDERA_NETWORKS as readonly string[]).includes(value)) {
+    throw new RangeError(
+      `HEDERA_NETWORK must be one of ${HEDERA_NETWORKS.join(", ")}; got "${value}"`,
+    );
+  }
+  const network = value as HederaCaipNetwork;
+  return { network, short: network === "hedera:mainnet" ? "mainnet" : "testnet" };
+}
+
 /** 0.1 HBAR. A metered full verdict costs at most 0.009; this leaves room for a price change. */
 export const DEFAULT_MAX_PER_PAYMENT_TINYBARS = 10_000_000n;
 

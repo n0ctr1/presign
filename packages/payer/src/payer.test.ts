@@ -6,6 +6,7 @@ import {
   createPayer,
   formatTinybars,
   hbarToTinybars,
+  parseHederaNetwork,
   PrivateKey,
   resolveKey,
 } from "../dist/index.js";
@@ -18,6 +19,16 @@ test("HBAR amounts convert without floating point", () => {
   assert.equal(formatTinybars(100_000_000n), "1 HBAR");
   assert.throws(() => hbarToTinybars("0.000000001"), RangeError);
   assert.throws(() => hbarToTinybars("abc"), RangeError);
+});
+
+test("the network is read from the environment or refused, never guessed", () => {
+  assert.deepEqual(parseHederaNetwork(undefined), { network: "hedera:testnet", short: "testnet" });
+  assert.deepEqual(parseHederaNetwork(" hedera:mainnet "), { network: "hedera:mainnet", short: "mainnet" });
+
+  // "mainnet" without the prefix used to be cast: testnet secrets, a mainnet
+  // x402 network, and a facilitator that did not exist several frames later.
+  assert.throws(() => parseHederaNetwork("mainnet"), RangeError);
+  assert.throws(() => parseHederaNetwork("eip155:1"), RangeError);
 });
 
 /** A mirror node that reports a chosen key type and public key. */

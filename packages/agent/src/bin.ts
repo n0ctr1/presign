@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { decodePaymentResponseHeader } from "@x402/fetch";
-import { createPayer, resolveKey } from "@presign/payer";
+import { createPayer, parseHederaNetwork, resolveKey } from "@presign/payer";
 
 const SECRETS = join(homedir(), ".presign", "secrets");
 const readSecret = async (name: string) =>
@@ -28,8 +28,7 @@ const SPENDER = "0x00000000000000000000000000000000deadbeef";
 
 async function main(): Promise<void> {
   const base = process.env["PRESIGN_URL"] ?? "http://127.0.0.1:4021";
-  const network = process.env["HEDERA_NETWORK"] ?? "hedera:testnet";
-  const short = network === "hedera:mainnet" ? "mainnet" : "testnet";
+  const { network, short } = parseHederaNetwork(process.env["HEDERA_NETWORK"]);
 
   const accountId = await readSecret(`hedera__${short}-agent-id`);
   const privateKey = await resolveKey(

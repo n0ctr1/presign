@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="presign">
+  <!--
+    The mark is the site's own plate: an ink tile with a hairline edge, and a
+    monospace p drawn as geometry rather than type, so it renders the same
+    wherever the font is not. The descender is what keeps it a p at 16 pixels.
+
+    Light mode swaps the plate for the paper the page uses under its verdict
+    stamps; browsers that ignore the media query keep the dark plate, which is
+    the one the tab strip usually sits on anyway.
+  -->
+  <style>
+    .plate { fill: #0A0E1A; }
+    .edge  { stroke: #2E3C58; }
+    .mark  { stroke: #8B6BFF; }
+    @media (prefers-color-scheme: light) {
+      .plate { fill: #E9E3D5; }
+      .edge  { stroke: #C9C0AB; }
+      .mark  { stroke: #6B45F5; }
+    }
+  </style>
+  <rect class="plate" width="32" height="32" rx="7"/>
+  <rect class="edge" x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke-width="1"/>
+  <g class="mark" fill="none" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.7 7.6 V24.6"/>
+    <path d="M10.7 7.6 H16.2 A5 5 0 0 1 16.2 17.6 H10.7"/>
+  </g>
+</svg>

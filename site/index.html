@@ -7,6 +7,13 @@
 <meta name="description" content="Pre-signature transaction risk for agent wallets. The verdict names the deployment that answered and how far behind chain head it was, and a green verdict is unreachable without fresh context. Live on Hedera testnet." />
 <link rel="alternate" type="text/plain" href="/llms.txt"
       title="Integration guide for agents — the whole surface, no markup">
+<!-- The mark is a p on the same ink plate the page is printed on; the SVG
+     carries a light-mode variant, and the ICO covers browsers that ask for
+     /favicon.ico before they read any markup. -->
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#06080F">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
@@ -73,7 +80,34 @@ section{border-bottom:var(--rail);position:relative}
 .lead{color:var(--fg-2);font-size:14.5px;max-width:60ch}
 h2.head{font-size:clamp(26px,4vw,44px);line-height:1.08;letter-spacing:-.01em}
 h2.head em{font-style:italic;color:var(--violet)}
+/* One column: the paragraph sits under the headline it qualifies. Sections
+   that would leave the right half empty put something there instead — the
+   rules themselves, or an engraved panel. */
 .sec-head{padding:clamp(40px,5.5vw,72px) 0 28px;display:grid;gap:16px;max-width:66ch}
+.ladder{max-width:none}
+/* Centred and tapering, widest line first. */
+.taper{max-width:none;text-align:center;margin:-18px 0 clamp(34px,4vw,54px)}
+
+/* The coverage matrix as a field of hairline combs, beside the argument. */
+.cover-top{display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,4vw,56px);align-items:center}
+.ticks{width:100%;height:clamp(150px,17vw,230px);opacity:.85}
+
+/* Rules to the right of the argument, two by two. */
+.pipe-wrap{display:grid;grid-template-columns:1fr 1fr;align-items:center}
+#pipeline .sec-head{padding-bottom:clamp(40px,5.5vw,72px)}
+#pipeline .pipe{border-top:0;border-left:var(--rail);grid-template-columns:repeat(2,1fr)}
+#pipeline .step:nth-child(2n){border-right:0}
+#pipeline .step:nth-child(-n+2){border-bottom:var(--rail)}
+
+/* An engraved band rather than a rosette: straight-line guilloché, the kind
+   that fills the background of a share certificate, breathing slowly under
+   the text it belongs to. */
+#verdicts .sec-head{max-width:74ch;margin:0 auto;justify-items:center;text-align:center;
+  padding-bottom:clamp(22px,3vw,34px)}
+.weave{display:block;width:100%;height:clamp(120px,14vw,200px);
+  margin-bottom:clamp(30px,4vw,52px);transform-origin:50% 50%;
+  animation:shimmer 26s ease-in-out infinite}
+@keyframes shimmer{0%,100%{transform:scaleY(1);opacity:.72}50%{transform:scaleY(1.12);opacity:1}}
 
 .btn{border:1px solid var(--line-2);padding:8px 16px;font-size:12.5px;font-family:inherit;
      background:transparent;color:var(--fg);cursor:pointer;display:inline-block}
@@ -93,7 +127,7 @@ nav a:hover{color:var(--violet)}
 .pulse i{display:inline-block;width:6px;height:6px;background:var(--mint);border-radius:50%;margin-right:7px;vertical-align:middle}
 
 /* ---------- ticker ---------- */
-.ticker{display:flex;gap:26px;align-items:center;height:36px;overflow:hidden;
+.ticker{display:flex;gap:26px;align-items:center;justify-content:center;height:36px;overflow:hidden;
         font-size:11.5px;color:var(--dim);letter-spacing:.05em;white-space:nowrap}
 /* One element per entry, so entries drop out whole rather than being sliced
    through the middle of a word by the container's overflow. */
@@ -107,10 +141,16 @@ nav a:hover{color:var(--violet)}
 
 /* ---------- hero ---------- */
 .hero{position:relative;overflow:hidden}
-.watermark{position:absolute;right:-190px;top:-140px;width:720px;height:720px;opacity:.5;
-           pointer-events:none;z-index:0}
+/* A guilloché rosette turning slowly behind the verdict card: at 220 seconds
+   a revolution nobody watches it move, but the interference between its rings
+   shifts, which is the point of engraving this kind of curve at all. */
+.watermark{position:absolute;right:-550px;top:-500px;width:1440px;height:1440px;opacity:.5;
+           pointer-events:none;z-index:0;transform-origin:50% 50%;
+           animation:turn 220s linear infinite, breathe 19s ease-in-out infinite}
+@keyframes turn{to{transform:rotate(-360deg)}}
+@keyframes breathe{0%,100%{opacity:.46}50%{opacity:.6}}
 .hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.02fr .98fr}
-.hero-l{padding:clamp(46px,6vw,88px) clamp(16px,3.2vw,44px) 40px;border-right:var(--rail)}
+.hero-l{padding:clamp(46px,6vw,88px) clamp(16px,3.2vw,44px) 40px}
 .hero-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center}
 
 h1{font-size:clamp(38px,6vw,74px);line-height:.98;letter-spacing:-.03em;font-weight:500;margin:24px 0 22px}
@@ -124,8 +164,9 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
        animation:blink 1.15s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:24px}
-.chip{border:1px solid var(--line);padding:4px 9px;font-size:10.5px;color:var(--dim);letter-spacing:.08em}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:24px}
+/* Tight enough for all ten to hold one line at full width. */
+.chip{border:1px solid var(--line);padding:4px 7px;font-size:10px;color:var(--dim);letter-spacing:.06em}
 
 /* ---------- intercept panel ---------- */
 .intercept{border:1px solid var(--line-2);background:linear-gradient(180deg,var(--ink-3),var(--ink-2));
@@ -165,6 +206,8 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 @media (prefers-reduced-motion:reduce){
   .draw{animation:none;stroke-dashoffset:0}
   .caret{animation:none}
+  .watermark,.cta .ros,.weave{animation:none}
+  .sweep{animation:none;stroke-dashoffset:0}
 }
 
 /* ---------- spectrum divider ---------- */
@@ -197,11 +240,23 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 .s-ok h3{color:var(--mint)} .s-esc h3{color:var(--gold)} .s-deny h3{color:var(--rose)}
 
 /* ---------- escalation ---------- */
-.esc{display:grid;grid-template-columns:1fr 440px;border-top:var(--rail)}
-.esc-l{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);border-right:var(--rail)}
+/* The argument and the device are one thought — the verdict is what lands on
+   that screen — so no rail divides them. A rosette sits on the seam instead,
+   whole, straddling it the way a seal straddles a join. */
+.esc{display:grid;grid-template-columns:1fr 440px;border-top:var(--rail);
+     position:relative;overflow:hidden}
+.esc-seam{position:absolute;left:calc(100% - 440px);bottom:0;width:420px;height:420px;
+          transform:translate(-50%,50%);opacity:.34;pointer-events:none;z-index:0}
+.esc-l{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);position:relative;z-index:1}
+/* No overflow clip here: with the rail gone, clipping at the column edge cut
+   the halo along a straight line exactly where the border used to be. It
+   bleeds across the seam now, and only the section's own edges bound it. */
 .esc-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center;
-       justify-content:center;position:relative;overflow:hidden}
-.esc-r .halo{position:absolute;width:520px;height:520px;opacity:.35;pointer-events:none}
+       justify-content:flex-start;position:relative;z-index:1}
+.esc-r /* As large as the section is tall, and no larger: a floor under the section
+   made it big at the cost of stretching the flow diagram beside it down the
+   page, which is a worse trade than a smaller rosette. */
+.halo{position:absolute;width:460px;height:460px;opacity:.35;pointer-events:none}
 .flow{display:grid;font-size:12px;margin-top:28px;max-width:520px}
 .node{border:1px solid var(--line);padding:12px 14px;background:var(--ink-2);display:flex;gap:14px;align-items:center}
 .node .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.1em;width:88px;flex:none}
@@ -240,7 +295,6 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 .paper .tag b{color:#6B3FD4}
 .paper h2.head em{color:#6B3FD4}
 .paper .lead{color:#3D4247}
-.paper .rosette{position:absolute;right:-120px;bottom:-120px;width:420px;height:420px;opacity:.22}
 
 .facts{margin-top:30px;border-top:1px solid rgba(20,24,28,.22)}
 .fact{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:13px 0;
@@ -272,6 +326,16 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 
 /* ---------- coverage ---------- */
 .matrix{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 clamp(34px,4vw,54px)}
+/* The argument on the left, the thing it describes on the right: the
+   examples are what the paragraph is about, so they sit beside it rather than
+   under it with the right half of the screen left empty. */
+#integrate .integrate-top{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);
+  gap:clamp(24px,4vw,56px);align-items:center}
+#integrate .sec-head{max-width:none;padding-bottom:clamp(16px,2vw,26px)}
+/* Without this the code panel's widest line sets the column width instead of
+   scrolling inside it. */
+#integrate .tabs-wrap{min-width:0}
+@media (max-width:1040px){#integrate .integrate-top{grid-template-columns:1fr}}
 .matrix th,.matrix td{border:1px solid var(--line);padding:11px 13px;text-align:left}
 .matrix thead th{color:var(--dim);font-weight:400;font-size:10.5px;letter-spacing:.1em;background:var(--ink-2)}
 .matrix tbody th{font-weight:400}
@@ -291,17 +355,21 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 .nums{display:grid;grid-template-columns:repeat(4,1fr);border-top:var(--rail)}
 /* Three figures, not four with a hole where a fourth used to be. */
 .nums.three{grid-template-columns:repeat(3,1fr)}
-.num{padding:28px clamp(14px,2vw,26px) 32px;border-right:var(--rail)}
+.num{padding:24px clamp(10px,1.4vw,18px) 26px;border-right:var(--rail)}
 .num:last-child{border-right:0}
 .num .big{font-family:"Instrument Serif",serif;font-size:clamp(30px,4vw,44px);line-height:1}
-.num .lb{font-size:11.5px;color:var(--dim);margin-top:10px}
+.num .lb{font-size:11.5px;color:var(--dim);margin-top:0}
 
-.num .big.live{color:var(--fg)}
 .num .big.pending{color:var(--line-2)}
 /* Aligned to the figures it annotates, not to the page rail: the numbers grid
    indents by its own cell padding, and borrowing `.pad` instead left the line
    sitting eighteen pixels inside the column it describes. Flex rather than
    inline so a wrapped second line hangs under the text and not under the dot. */
+/* The health line rides on the tag row, hard right. */
+.nums-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
+.nums-head .live-note{padding:0;max-width:none}
+.one-line{max-width:none}
+@media (min-width:900px){.one-line span{white-space:nowrap}}
 .live-note{display:flex;gap:8px;align-items:baseline;max-width:92ch;
            font-size:10.5px;color:var(--dim);letter-spacing:.08em;line-height:1.6;
            padding:16px clamp(14px,2vw,26px) 28px}
@@ -317,7 +385,16 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
      here or the heading sits flush against the frame. */
   padding:clamp(52px,7vw,96px) clamp(16px,3.2vw,44px)}
 .cta h2{font-size:clamp(30px,5vw,56px);line-height:1.04;letter-spacing:-.02em;max-width:18ch;font-weight:500}
-.cta .ros{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:640px;height:640px;opacity:.3}
+.cta .inner{text-align:center}
+.cta h2{margin-left:auto;margin-right:auto}
+.cta .hero-cta{justify-content:center}
+.cta .cmd{margin-left:auto;margin-right:auto;justify-content:flex-start;
+  width:max-content;max-width:100%;padding:9px 12px;font-size:12px}
+/* Centred by transform, so the spin has to carry the centring with it. */
+.cta .ros{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:1280px;height:1280px;opacity:.3;
+  animation:turn-centred 220s linear infinite, breathe 19s ease-in-out infinite}
+@keyframes turn-centred{to{transform:translate(-50%,-50%) rotate(-360deg)}}
 
 /* ---------- footer ---------- */
 /* `footer.pad` rather than `footer`: a bare type selector loses to `.pad`,
@@ -333,9 +410,16 @@ footer a:hover{color:var(--violet)}
        justify-content:space-between;gap:16px;flex-wrap:wrap;font-size:11px}
 
 /* ---------- responsive ---------- */
+@media (max-width:900px){
+  .pipe-wrap,.cover-top{grid-template-columns:1fr}
+  #pipeline .pipe{border-left:0;border-top:var(--rail)}
+  .ticks{display:none}
+}
 @media (max-width:1040px){
   .hero-grid,.esc,.paper-grid{grid-template-columns:1fr}
-  .hero-l,.esc-l,.paper-l{border-right:0;border-bottom:var(--rail)}
+  .paper-l{border-right:0;border-bottom:var(--rail)}
+  .esc-l{border-right:0}
+  .esc-seam{display:none}
   .paper-l{border-bottom:1px solid rgba(20,24,28,.18)}
   .pipe,.nums{grid-template-columns:1fr 1fr}
   .step:nth-child(2),.num:nth-child(2){border-right:0}
@@ -357,6 +441,44 @@ footer a:hover{color:var(--violet)}
   .fgrid{grid-template-columns:1fr}
   .device{width:100%;max-width:290px}
 }
+/* ---- live examples ------------------------------------------------------
+   The one interactive thing on the page. It asks this instance for a verdict
+   on a fixed transaction and prints what came back, including how old the
+   answer is — the page holding itself to the rule it sells.
+
+   The head runs in two columns here, because the block below it is a wide
+   grid and a 66ch column above one leaves the right half of the screen empty.
+   ------------------------------------------------------------------------ */
+.live{display:grid;grid-template-columns:minmax(250px,340px) 1fr;gap:22px;
+  margin-top:6px;padding-bottom:clamp(40px,5.5vw,72px)}
+@media(max-width:860px){.live{grid-template-columns:1fr}}
+/* The card carries the border, so a control inside it reads as part of the
+   choice rather than as a fourth thing in the list. */
+.pick-card{border:1px solid var(--line);background:var(--ink-2);margin-bottom:10px}
+.pick-card:hover{border-color:var(--line-2)}
+.pick-card.is-on{border-color:var(--violet);box-shadow:inset 2px 0 0 var(--violet)}
+.pick{display:block;width:100%;text-align:left;background:none;border:0;color:var(--fg);
+      font:inherit;font-size:13px;line-height:1.45;padding:12px 14px;cursor:pointer}
+.pick b{display:block;font-weight:500;margin-bottom:4px}
+.pick span{color:var(--dim)}
+.budget{border-top:1px solid var(--line);padding:10px 14px 12px}
+.budget label{display:block;color:var(--dim);font-size:10.5px;letter-spacing:.08em;margin-bottom:9px}
+.budget-row{display:flex;align-items:center;gap:12px}
+.budget input{flex:1;min-width:0;accent-color:var(--violet)}
+.budget output{color:var(--violet);min-width:32px;text-align:right}
+.live-out{border:1px solid var(--line);background:var(--ink-2);padding:18px 20px;min-height:280px;font-size:13px}
+.live-tier{font-size:26px;letter-spacing:.06em;margin:0 0 3px}
+.live-act{color:var(--fg-2);margin:0 0 4px}
+.live-out h4{color:var(--dim);font-size:11px;letter-spacing:.08em;margin:16px 0 6px;font-weight:400}
+.live-out ul{list-style:none;margin:0;padding:0}
+.live-out li{padding:4px 0;border-bottom:1px solid var(--line);color:var(--fg-2)}
+.live-sev{display:inline-block;min-width:72px}
+.live-age{color:var(--dim);margin-top:16px}
+/* The same gesture as the band further up the page: a stroke that runs at a
+   gate and stops there. Here it runs while the instance is being asked. */
+.waiting{display:block;width:100%;max-width:430px;margin:2px 0 12px}
+.sweep{stroke-dasharray:760;animation:sweep 2.1s ease-in-out infinite}
+@keyframes sweep{0%{stroke-dashoffset:760;opacity:.25}55%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
 </style>
 </head>
 <body>
@@ -409,11 +531,12 @@ footer a:hover{color:var(--violet)}
       <div class="hero-l">
         <p class="tag">PRE-SIGNATURE RISK FOR AGENT WALLETS · <b>live on Hedera testnet</b></p>
         <h1>Every verdict says<span class="l2">how stale it is.</span></h1>
-        <p class="lead">
-          Acting before the signature is not the novel part — Hexagate, Blockaid and GoPlus all do it.
-          What none of them return is the age of the evidence behind the answer. A green verdict
-          computed from six-hour-old context looks identical to one computed at chain head, and
-          before a signature that difference is the entire risk.
+        <p class="lead ladder">
+          Acting before the signature is not new.<br>
+          Hexagate, Blockaid and GoPlus all do that.<br>
+          None of them return the age of the evidence.<br>
+          A verdict computed six hours ago looks like a fresh one.<br>
+          Immediately before a signature, that gap is the whole risk.
         </p>
 
         <div class="hero-cta">
@@ -429,8 +552,7 @@ footer a:hover{color:var(--violet)}
         <div class="chips">
           <span class="chip">ETHEREUM</span><span class="chip">BASE</span><span class="chip">ARBITRUM</span>
           <span class="chip">OPTIMISM</span><span class="chip">POLYGON</span><span class="chip">THE GRAPH</span>
-          <span class="chip">HEDERA</span><span class="chip">LEDGER</span><span class="chip">x402</span>
-          <span class="chip">MCP</span>
+          <span class="chip">HEDERA</span><span class="chip">LEDGER</span><span class="chip">x402</span><span class="chip">MCP</span>
         </div>
       </div>
 
@@ -527,7 +649,8 @@ footer a:hover{color:var(--violet)}
 
   <!-- ================= PIPELINE ================= -->
   <section id="pipeline">
-    <div class="pad">
+    <div class="pipe-wrap">
+      <div class="pad">
       <div class="sec-head">
         <p class="tag">WHAT A VERDICT ACTUALLY COSTS</p>
         <h2 class="head">Rules read the transaction's <em>effects, not its calldata.</em></h2>
@@ -535,8 +658,8 @@ footer a:hover{color:var(--violet)}
           does, and the two part company exactly where it matters — a router, a multicall, or a
           permit forwarding an approval on somebody's behalf.</p>
       </div>
-    </div>
-    <div class="pipe">
+      </div>
+      <div class="pipe">
       <div class="step">
         <p class="n serif">i</p>
         <h3>Simulate</h3>
@@ -566,6 +689,7 @@ footer a:hover{color:var(--violet)}
            could not run turns an otherwise clean result into <em>unavailable</em>.</p>
         <p class="ms">FOUR OUTCOMES, NO FIFTH</p>
       </div>
+      </div>
     </div>
   </section>
 
@@ -579,6 +703,7 @@ footer a:hover{color:var(--violet)}
           saw. <em>unavailable</em> is a tier in the type system, not an error code, so a rule that
           fails cannot be mistaken for a rule that found nothing.</p>
       </div>
+      <svg class="weave" id="weave" viewBox="0 0 520 300" preserveAspectRatio="none" aria-hidden="true"></svg>
     </div>
     <div class="stamps">
       <div class="stamp s-ok">
@@ -612,9 +737,55 @@ footer a:hover{color:var(--violet)}
     </div>
   </section>
 
+  <!-- ================= LIVE EXAMPLES ================= -->
+  <section id="live-examples">
+    <div class="pad">
+      <div class="sec-head">
+        <p class="tag">LIVE ON THIS INSTANCE</p>
+        <h2 class="head">Three transactions, <em>judged while you watch.</em></h2>
+        <p class="lead">Fixed examples rather than a box for arbitrary calldata: agents send their
+          own transactions to the paid routes, and a public endpoint that simulates whatever anyone
+          pastes is an abuse surface held back by a rate limit you would have to trust. Each answer
+          is computed on a mainnet fork by this instance, reused for a minute, and stamped with its
+          own age — if the fork goes down you get the last real verdict and the seconds since.</p>
+      </div>
+      <div class="live">
+        <div class="picks">
+          <div class="pick-card is-on">
+            <button class="pick" type="button" data-example="blacklisted-approval" aria-pressed="true">
+              <b>Unlimited approval to a blacklisted address</b>
+              <span>R1 reads the allowance from the state diff and the spender from ScamSniffer's list.</span>
+            </button>
+          </div>
+          <div class="pick-card">
+            <button class="pick" type="button" data-example="aave-pool" data-budget="1" aria-pressed="false">
+              <b>A call to the Aave V3 pool</b>
+              <span>The same call, under a freshness budget you choose.</span>
+            </button>
+            <div class="budget" id="budget-box" hidden>
+              <label for="budget">FRESHNESS BUDGET — HOW STALE THE INDEXED DATA MAY BE</label>
+              <div class="budget-row">
+                <input id="budget" type="range" min="0" max="4" step="1" value="3">
+                <output id="budget-value" for="budget">30s</output>
+              </div>
+            </div>
+          </div>
+          <div class="pick-card">
+            <button class="pick" type="button" data-example="usdc-transfer" aria-pressed="false">
+              <b>Sending 1 USDC to an ordinary address</b>
+              <span>The counterparty is an upgradeable proxy, and that is reported at info.</span>
+            </button>
+          </div>
+        </div>
+        <div class="live-out" id="live-out"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= ESCALATION ================= -->
   <section id="escalation">
     <div class="esc">
+      <svg class="esc-seam" id="ros-seam" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
       <div class="esc-l">
         <p class="tag">THE DEVICE IS NOT A NOTIFICATION</p>
         <h2 class="head" style="margin:16px 0 18px">Only <em>medium</em> reaches a human.<br><em>High never does.</em></h2>
@@ -635,7 +806,7 @@ footer a:hover{color:var(--violet)}
       </div>
 
       <div class="esc-r">
-        <svg class="halo" id="halo" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
+        <svg class="halo" id="halo" viewBox="-320 -280 550 550" aria-hidden="true"></svg>
         <div class="device" role="img" aria-label="Hardware wallet screen showing an escalated confirmation">
           <div class="screen">
             <p class="t">PRESIGN · CONFIRM</p>
@@ -651,7 +822,6 @@ footer a:hover{color:var(--violet)}
 
   <!-- ================= PROVENANCE (paper) ================= -->
   <section id="provenance" class="paper">
-    <svg class="rosette" id="ros-paper" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
     <div class="paper-grid">
       <div class="paper-l">
         <p class="tag">THE FIELD THE INCUMBENTS DO NOT RETURN</p>
@@ -717,6 +887,7 @@ footer a:hover{color:var(--violet)}
   <!-- ================= COVERAGE ================= -->
   <section id="coverage">
     <div class="pad">
+      <div class="cover-top">
       <div class="sec-head">
         <p class="tag">MEASURED, NOT ESTIMATED · npm run coverage</p>
         <h2 class="head">One rule, one standard schema, <em>every protocol that speaks it.</em></h2>
@@ -724,6 +895,8 @@ footer a:hover{color:var(--violet)}
           a new protocol inside a family already read — it is covered the moment somebody indexes it
           with the standard schema. A line of code buys a new family, and the rows below are what
           three of those lines bought.</p>
+      </div>
+      <svg class="ticks" id="ticks" viewBox="0 0 520 260" preserveAspectRatio="none" aria-hidden="true"></svg>
       </div>
       <table class="matrix">
         <thead><tr><th>Schema family</th><th>Ethereum</th><th>Optimism</th><th>Polygon</th><th>Base</th><th>Arbitrum</th></tr></thead>
@@ -733,11 +906,12 @@ footer a:hover{color:var(--violet)}
           <tr><th>yield-vault</th><td class="ok">2</td><td class="soon">0</td><td class="soon">0</td><td class="soon">0</td><td class="ok">1</td></tr>
         </tbody>
       </table>
-      <p class="lead" style="margin:-24px 0 clamp(34px,4vw,54px)">
-        33 conforming deployments — Aave V2 and V3, Compound V2 and V3, Morpho Blue, DForce, Sonne,
-        Radiant, Seamless, Curve, Uniswap V3, Velodrome V2, Sushiswap, Yearn V2, Rari — reachable
-        with no per-protocol code. The thin row is honest too: <em>yield-vault</em> is where coverage
-        runs out.
+      <p class="lead taper">
+        33 conforming deployments — Aave V2 and V3, Compound V2 and V3, Morpho Blue,<br>
+        DForce, Sonne, Radiant, Seamless, Curve, Uniswap V3, Velodrome V2,<br>
+        Sushiswap, Yearn V2, Rari — reachable with no code per protocol.<br>
+        The thin row is honest too: <em>yield-vault</em> is where<br>
+        this coverage runs out.
       </p>
     </div>
   </section>
@@ -745,6 +919,7 @@ footer a:hover{color:var(--violet)}
   <!-- ================= INTEGRATION ================= -->
   <section id="integrate">
     <div class="pad">
+      <div class="integrate-top">
       <div class="sec-head">
         <p class="tag">NO KEY, NO ACCOUNT, NO SUBSCRIPTION</p>
         <h2 class="head">Ask the price first, <em>then decide to pay.</em></h2>
@@ -756,6 +931,7 @@ footer a:hover{color:var(--violet)}
           response fields, and what each of the four tiers obliges you to do.</p>
       </div>
 
+      <div class="tabs-wrap">
       <div class="tabs" role="tablist" aria-label="Integration examples">
         <button role="tab" aria-selected="true"  aria-controls="p-ts"  id="t-ts">curl · x402</button>
         <button role="tab" aria-selected="false" aria-controls="p-py"  id="t-py">MCP servers</button>
@@ -775,34 +951,25 @@ curl -s https://presign.dev/health
 curl -sX POST https://presign.dev/verdict/full \
   -H <span class="s">'content-type: application/json'</span> \
   -d <span class="s">'{"transaction":{"from":"0x…","to":"0x…","value":"0",</span>
-<span class="s">       "data":"0x095ea7b3…","chainId":1}}'</span></pre>
+<span class="s">       "data":"0x095ea7b3…","chainId":1}}'</span>
+<span class="c"># The answer names the deployment that served it, and its lag.</span></pre>
       </div>
 
       <div class="code" role="tabpanel" id="p-py" aria-labelledby="t-py" hidden>
         <div class="ch"><span class="fname">two MCP servers — paid verdicts, and the data layer</span></div>
-<pre><span class="c"># Freshness-gated source selection ships as its own MCP server, so</span>
-<span class="c"># another team can use it without adopting our rules or simulation.</span>
-<span class="c"># Not on npm yet: from a clone, after npm install &amp;&amp; npm run build.</span>
-<span class="c"># A model buys a verdict itself — the x402 payment happens inside the tool,</span>
-<span class="c"># from a session budget it cannot raise. The keys stay in the Ledger Key Ring.</span>
+<pre><span class="c"># A model buys a verdict itself — the x402 payment happens inside the</span>
+<span class="c"># tool, from a budget it cannot raise; keys stay in the Key Ring.</span>
 claude mcp add presign-verdict -e HEDERA_TESTNET_AGENT_ID=0.0.XXXXXXX \
-  -- sh -c 'WALLET_PASS=$(secret-tool lookup service ledger-wallet-cli account default) \
-            exec node …/packages/verdict-mcp/dist/bin.js'
-<span class="c">#   get_quote · check_service  free</span>
-<span class="c">#   get_verdict                paid, returns the tier and what_to_do</span>
-<span class="c">#   sign_transaction           signs only through a verdict; medium needs the Ledger</span>
+  -- node …/packages/verdict-mcp/dist/bin.js
+<span class="c">#   get_verdict       paid; returns the tier and what_to_do</span>
+<span class="c">#   sign_transaction  signs only through a verdict; medium needs the Ledger</span>
 
 <span class="c"># The data layer alone, without our rules or opinions about risk:</span>
-claude mcp add presign -- node "$PWD/packages/mcp-server/dist/bin.js"
-
-<span class="c"># Seven tools. The ones nothing else answers:</span>
+claude mcp add presign -- node …/packages/mcp-server/dist/bin.js
 <span class="c">#   resolve_rule_capability     which deployments can serve a rule now</span>
 <span class="c">#   check_deployment_freshness  lag from an independently-read chain head</span>
-<span class="c">#   check_proxy_upgrade_history when a proxy's logic last changed</span>
-
-<span class="c"># An upgrade is an event. Current state says what the implementation</span>
-<span class="c"># is now and never when it became that, so no schema carries it —</span>
-<span class="c"># it comes from a live Substreams stream instead.</span></pre>
+<span class="c">#   check_proxy_upgrade_history from a live Substreams stream, because</span>
+<span class="c">#   an upgrade is an event and no schema carries one</span></pre>
       </div>
 
       <div class="code" role="tabpanel" id="p-pol" aria-labelledby="t-pol" hidden>
@@ -821,14 +988,17 @@ budget  1s  →  <span class="y">unavailable</span>
 <span class="c"># Same protocol. Same data. Same code path. Only the budget</span>
 <span class="c"># changed — and a clean answer became unreachable.</span></pre>
       </div>
+      </div>
+      </div>
       <div style="height:clamp(34px,4vw,54px)"></div>
     </div>
   </section>
 
   <!-- ================= NUMBERS ================= -->
   <section id="numbers">
-    <div class="pad" style="padding-top:clamp(32px,4vw,50px);padding-bottom:4px">
+    <div class="pad nums-head" style="padding-top:clamp(32px,4vw,50px);padding-bottom:4px">
       <p class="tag">LIVE FROM THE RUNNING SERVICE</p>
+      <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
     </div>
     <div class="nums">
       <div class="num"><p class="big pending" id="n-journal">—</p><p class="lb">entries in the Hedera journal, our own test calls included</p></div>
@@ -836,20 +1006,15 @@ budget  1s  →  <span class="y">unavailable</span>
       <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks in the current watch window</p></div>
       <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict, by data checked</p></div>
     </div>
-    <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
 
-    <div class="pad" style="padding-bottom:4px">
-      <p class="tag">MEASURED ON THIS BUILD · npm run latency · npm run safety</p>
-    </div>
     <div class="nums three">
       <div class="num"><p class="big">394 ms</p><p class="lb">cold verdict on USDC, whole call</p></div>
       <div class="num"><p class="big">8 ms</p><p class="lb">warm, same counterparty</p></div>
       <div class="num"><p class="big">0</p><p class="lb">of 12 undisputed mainnet contracts refused</p></div>
     </div>
-    <p class="live-note" style="opacity:.85"><i></i>
-      <span>Cold is the first verdict for a counterparty; warm is the repeats after it. The false-positive
-      fixture exits non-zero if anything reaches <em>high</em>, so it gates a release rather than being
-      read and shrugged at.</span></p>
+    <p class="live-note one-line" style="opacity:.85"><i></i>
+      <span>Cold is the first verdict for a counterparty, warm the repeats after it; the fixture exits
+      non-zero if anything reaches <em>high</em>.</span></p>
   </section>
 
   <!-- ================= CTA ================= -->
@@ -862,7 +1027,7 @@ budget  1s  →  <span class="y">unavailable</span>
         <a class="btn" href="https://presign.dev/health">Health</a>
         <a class="btn" href="https://github.com/n0ctr1/presign">GitHub</a>
       </div>
-      <div class="cmd" style="max-width:680px">
+      <div class="cmd">
         <span class="p">$</span><span>curl -s https://presign.dev/health</span>
       </div>
     </div>
@@ -953,7 +1118,59 @@ function drawSeal(svg, color) {
 
 drawRosette(document.getElementById("wm"),        { color: "#8B6BFF", rings: 6, turns: 53 });
 drawRosette(document.getElementById("halo"),      { color: "#FFB020", rings: 4, r: 39, turns: 39, width: 0.45 });
-drawRosette(document.getElementById("ros-paper"), { color: "#6B3FD4", rings: 4, r: 53, turns: 41, width: 0.6 });
+/* Straight-line guilloché: sine curves whose amplitude swells in the middle
+   of the band and whose frequency drifts across it, so the strokes interfere
+   the way engine-turned engraving does — without a circle anywhere. */
+function drawWeave(svg, opts) {
+  const o = Object.assign({ lines: 30, w: 520, h: 300, color: "#8B6BFF", width: 0.6 }, opts || {});
+  let markup = "";
+  for (let i = 0; i < o.lines; i++) {
+    const t = i / (o.lines - 1);
+    const swell = Math.sin(t * Math.PI);
+    const amp = 10 + 30 * swell;
+    const freq = 2.1 + 1.7 * t;
+    const phase = t * Math.PI * 1.15;
+    const y0 = 14 + t * (o.h - 28);
+    let d = "";
+    for (let x = 0; x <= o.w; x += 4) {
+      const y = y0 + amp * Math.sin((x / o.w) * freq * Math.PI * 2 + phase);
+      d += (x ? "L" : "M") + x + " " + y.toFixed(1);
+    }
+    markup += '<path d="' + d + '" fill="none" stroke="' + o.color + '"' +
+              ' stroke-width="' + o.width + '" opacity="' + (0.16 + 0.46 * swell).toFixed(2) + '"/>';
+  }
+  svg.innerHTML = markup;
+}
+drawWeave(document.getElementById("weave"), {});
+
+/* The coverage table as engraving: one hairline per conforming deployment,
+   combed into a group per chain. Where a family reaches nothing the group is a
+   dotted rule rather than blank space — the gap is the honest part. */
+function drawTicks(svg, rows) {
+  let markup = "";
+  rows.forEach(function (counts, r) {
+    const base = 62 + r * 82;
+    markup += '<line x1="24" y1="' + base + '" x2="496" y2="' + base + '" stroke="#2E3C58" stroke-width="1"/>';
+    counts.forEach(function (n, c) {
+      const x0 = 36 + c * 94;
+      if (n === 0) {
+        markup += '<line x1="' + x0 + '" y1="' + (base - 8) + '" x2="' + (x0 + 46) + '" y2="' + (base - 8) +
+                  '" stroke="#61708E" stroke-width="1" stroke-dasharray="2 4" opacity=".7"/>';
+        return;
+      }
+      for (let i = 0; i < n; i++) {
+        const x = x0 + i * 8;
+        const h = 14 + (i % 3) * 5 + n * 2.4;
+        markup += '<line x1="' + x + '" y1="' + base + '" x2="' + x + '" y2="' + (base - h).toFixed(1) +
+                  '" stroke="#8B6BFF" stroke-width="1.6" opacity="' + (0.55 + 0.05 * (i % 3)).toFixed(2) + '"/>';
+      }
+    });
+  });
+  svg.innerHTML = markup;
+}
+drawTicks(document.getElementById("ticks"), [[6, 3, 3, 4, 6], [2, 2, 1, 1, 2], [2, 0, 0, 0, 1]]);
+
+drawRosette(document.getElementById("ros-seam"),  { color: "#8B6BFF", rings: 5, r: 45, turns: 45, width: 0.5 });
 drawRosette(document.getElementById("ros-cta"),   { color: "#8B6BFF", rings: 7, r: 43, turns: 61, width: 0.45 });
 
 const sealColors = { ok: "#3DE6A8", esc: "#FFB020", deny: "#FF4E6A", una: "#7E93C4" };
@@ -996,7 +1213,6 @@ tabs.forEach(function (tab) {
     if (!el) return;
     el.textContent = text;
     el.classList.remove("pending");
-    el.classList.add("live");
   }
 
   function say(state, text) {
@@ -1155,6 +1371,130 @@ tabs.forEach(function (tab) {
        unreachable would be the one piece of this page not worth reading. */
     el.innerHTML = row("", "·", "the verdict journal could not be read just now");
   });
+})();
+
+/* ==========================================================================
+   LIVE EXAMPLES
+   Fixed transactions, judged by this instance on a mainnet fork. Everything
+   printed here came back from /demo/verdict a moment ago, including the age
+   of the answer itself: a page that argues nobody reports staleness has to
+   report its own.
+   ========================================================================== */
+(function () {
+  var out = document.getElementById("live-out");
+  if (!out || !window.fetch) return;
+  var picks = [].slice.call(document.querySelectorAll(".pick"));
+  var box = document.getElementById("budget-box");
+  var slider = document.getElementById("budget");
+  var readout = document.getElementById("budget-value");
+  var STOPS = [1, 5, 15, 30, 60];
+  var current = "blacklisted-approval";
+  var token = 0;
+
+  /* Static markup of our own. The stroke runs at the gate and stops, which is
+     what the page says a verdict does to a signature. */
+  var WAITING = '<svg class="waiting" viewBox="0 0 520 90" aria-hidden="true"><line x1="0" y1="70" x2="520" y2="70" stroke="#1A2337" stroke-width="1"/><path class="sweep" d="M14 64 C 44 24, 62 8, 84 16 C 106 24, 92 56, 74 62 C 60 67, 62 46, 84 38 C 114 28, 142 60, 170 58 C 198 56, 218 22, 240 18 C 262 14, 258 52, 240 62 C 226 70, 224 40, 248 32 C 276 22, 304 56, 332 58 C 358 60, 380 26, 402 24" fill="none" stroke="#8B6BFF" stroke-width="2.2" stroke-linecap="round"/><line x1="420" y1="8" x2="420" y2="84" stroke="#FFB020" stroke-width="1.2" stroke-dasharray="4 5"/><circle cx="420" cy="52" r="4.5" fill="#0A0E1A" stroke="#FFB020" stroke-width="1.5"/><text x="430" y="22" fill="#FFB020" font-family="JetBrains Mono, monospace" font-size="10" letter-spacing="1.4">VERDICT PENDING</text></svg>';
+  function waiting() {
+    out.innerHTML = WAITING;
+    out.appendChild(el("p", "live-act", "asking this instance\u2026"));
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function tone(tier) {
+    return { low: "v-ok", medium: "v-esc", high: "v-deny", unavailable: "v-una" }[tier] || "";
+  }
+  function severity(level) {
+    return level === "critical" ? "v-deny" : level === "warning" ? "v-esc" : "";
+  }
+
+  function render(data) {
+    out.textContent = "";
+    if (!data || data.error) {
+      out.appendChild(el("p", "live-act", (data && (data.message || data.error)) || "no answer"));
+      return;
+    }
+    var v = data.verdict || {};
+    out.appendChild(el("p", "live-tier " + tone(v.tier), String(v.tier || "").toUpperCase()));
+    out.appendChild(el("p", "live-act", v.action || ""));
+
+    var findings = v.findings || [];
+    out.appendChild(el("h4", null, findings.length ? "FINDINGS" : "NO FINDINGS"));
+    if (findings.length) {
+      var list = el("ul");
+      findings.forEach(function (f) {
+        var row = el("li");
+        row.appendChild(el("span", "live-sev " + severity(f.severity), f.severity));
+        row.appendChild(el("span", null, f.ruleId + " \u00b7 " + f.title));
+        list.appendChild(row);
+      });
+      out.appendChild(list);
+    }
+
+    var p = v.provenance || {};
+    out.appendChild(el("h4", null, "PROVENANCE"));
+    var prov = el("ul");
+    (p.sources || []).forEach(function (s) {
+      prov.appendChild(el("li", null, s.displayName + " \u00b7 lag " + s.effectiveLagSeconds + "s"));
+    });
+    (p.unavailableRules || []).forEach(function (u) {
+      prov.appendChild(el("li", "v-una", u.ruleId + " could not run \u2014 " + u.reason));
+    });
+    if (p.simulatedAtBlock) {
+      prov.appendChild(el("li", null, "simulated at block " + p.simulatedAtBlock +
+        (p.simulatedBlockAgeSeconds === null || p.simulatedBlockAgeSeconds === undefined
+          ? "" : " \u00b7 " + p.simulatedBlockAgeSeconds + "s old")));
+    }
+    out.appendChild(prov);
+
+    var c = data.computed || {};
+    var age = el("p", "live-age", "this answer was computed " + (c.age_seconds || 0) + "s ago");
+    if (c.could_not_refresh) {
+      age.textContent += " \u2014 and could not be refreshed just now: " + c.could_not_refresh;
+    }
+    out.appendChild(age);
+  }
+
+  function load() {
+    var mine = ++token;
+    var url = "/demo/verdict?example=" + encodeURIComponent(current) +
+              "&budget=" + STOPS[Number(slider.value)];
+    fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+      if (mine === token) render(data);
+    }).catch(function () {
+      if (mine === token) render({ error: "unreachable", message: "this instance could not be reached" });
+    });
+  }
+
+  picks.forEach(function (pick) {
+    pick.addEventListener("click", function () {
+      current = pick.getAttribute("data-example");
+      picks.forEach(function (other) {
+        other.setAttribute("aria-pressed", String(other === pick));
+        // The border lives on the card, so the slider inside the Aave card is
+        // part of that choice rather than a fourth row in the list.
+        other.parentNode.className = other === pick ? "pick-card is-on" : "pick-card";
+      });
+      box.hidden = pick.getAttribute("data-budget") === null;
+      waiting();
+      load();
+    });
+  });
+
+  slider.addEventListener("input", function () {
+    readout.textContent = STOPS[Number(slider.value)] + "s";
+  });
+  slider.addEventListener("change", function () {
+    waiting();
+    load();
+  });
+
+  waiting();
+  load();
 })();
 
 </script>

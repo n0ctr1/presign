@@ -195,8 +195,10 @@ score, however, is an economic one (query fees, curation, allocation) — it mea
   head, expressed as lag in seconds;
 - **capability binding to rules** — the query is not "what is this subgraph" but
   "which deployments can answer R3 right now under an N-second lag budget";
-- **warm-up** — candidates are resolved ahead of time and kept warm so a verdict
-  fits inside a second.
+- **warm-up** — candidates are resolved ahead of time and kept warm, which is
+  what keeps every verdict after the first for a counterparty inside 200 ms;
+  the first one still pays for discovery, and [Measured](#measured) says what
+  it costs.
 
 ### Layer 2 — the verdict
 
@@ -272,23 +274,32 @@ so `npm run latency` times whole verdicts instead:
 
 | counterparty | cold | warm p50 | what it pays for |
 |---|---|---|---|
-| Aave V3 Pool | 701 ms | 79 ms | R3 discovers, probes and queries |
-| USDC | 394 ms | 8 ms | R1, R2, and a counterparty R3 cannot speak for |
-| freshly deployed contract | 952 ms | 5 ms | R4 bisects historical `eth_getCode` |
-| Uniswap V3 USDC/WETH pool | 1196 ms | 99 ms | R3 resolves the pool through its factory and reads it by id |
-| Uniswap V3 Factory | 3006 ms | 3008 ms | the slow end — see below |
+| Aave V3 Pool | 3037 ms | 83 ms | R3 discovers, probes and queries |
+| USDC | 410 ms | 16 ms | R1, R2, and a counterparty R3 cannot speak for |
+| Uniswap V3 Factory | 550 ms | 161 ms | the slow end: a DEX subgraph answering in seconds |
+| freshly deployed contract | 720 ms | 6 ms | R4 bisects historical `eth_getCode` |
 
-Cold is the first verdict for that counterparty; warm is the repeats after it.
-Warm verdicts stay inside one second everywhere except the factory. Cold ones
-do too, with two exceptions: the first verdict for a pool, which pays for
-resolving its factory and looking up that factory's deployments (1.2 s), and
-the factory itself, kept in the table deliberately. R3's query for the factory asks for the largest pools by
-value locked, and the Uniswap V3 subgraph does not answer that inside the
-three-second gateway timeout, so the verdict is `unavailable`. Raising
-the limit to accommodate it cost a cold USDC verdict 306 ms → 7.7 s, because a
-slow deployment indexing USDC then spends most of the budget before R3 gives
-up on it. The short limit wins and the trade-off is a caller-settable
-`timeoutMs`, because it is a latency preference and not a safety one.
+Cold is the first verdict for that counterparty; warm is the repeats after it,
+and warm is what an operator sees for every request but the first. Warm stays
+inside 200 ms across the set and has been stable all week.
+
+Cold has not been. It pays for discovery and for probing candidate deployments
+against a shared gateway, so it moves with that gateway: three consecutive runs
+on 12 September 2026 measured the Aave case at 2775, 4090 and 3037 ms, and the
+factory at 2058, 643 and 550 ms. The plan's one-second budget holds warm
+everywhere; for a first verdict against an indexed protocol it does not, and
+the table above is one run rather than a best-of.
+
+The gateway timeout stays at three seconds. Raising it to eight, to
+accommodate the factory, cost a cold USDC verdict 306 ms → 7.7 s, because a
+slow deployment indexing USDC then spends most of the budget before R3 gives up
+on it — and USDC is on the path of almost every agent transaction while the
+factory is not. The short limit wins and the trade-off is a caller-settable
+`timeoutMs`, because it is a latency preference and not a safety one. What
+eventually made the factory answerable was not more time: probes issued
+together contended for that gateway and a failed probe was cached, so one
+contended timeout stood for the whole deployment. Failures are now re-asked one
+at a time and never cached, and the factory has answered since.
 
 ### False positives
 
@@ -321,13 +332,16 @@ A USDC transfer out of the wallet is `low`, with the admin finding kept at
 vault pulled in by `transferFrom` — no approval and no ETH in the transaction
 itself — still counts, because that is the rug R2 exists for.
 
-Twelve of twelve on 12 September 2026, and the row that moves is the Uniswap V3
-factory: its deployments are the slowest of the set, and on several earlier runs
-one of them missed the freshness budget and the contract came back
-`unavailable`. Curve's 3pool did the same once. Nothing about the contract
-changed between those runs and this one — the indexer's lag did. That is
-fail-closed doing exactly what it says, and it is also its cost, which is why
-the count here is a command rather than a claim.
+Twelve of twelve on 12 September 2026. The row that used to move is the Uniswap
+V3 factory: its deployments are the slowest of the set, and on earlier runs it
+came back `unavailable`, as Curve's 3pool did once. That looked like the
+indexer's lag and fail-closed doing exactly what it says. Most of it was ours:
+probes issued together contended for one gateway and a failed probe was cached
+for ten seconds, so a single contended timeout stood for the deployment and for
+every verdict in that window. Failed probes are now re-asked one at a time and
+never cached, and both rows have been `low` since. Real lag can still push a row
+to `unavailable` — that is the cost of fail-closed, and it is why the count here
+is a command rather than a claim.
 
 Running this is what found the one real false positive there was: R4 charged a human confirmation for
 Permit2, Multicall3 and Uniswap's router, on the reasoning that a contract old

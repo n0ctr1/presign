@@ -124,6 +124,58 @@ export async function resolveOperatorKey(
   );
 }
 
+/**
+ * Refuse a topic whose record this operator does not own.
+ *
+ * A reused topic id comes from an environment variable or a state file, and
+ * neither says anything about the topic. Two ways it can be the wrong one: it
+ * has no submit key, so anyone may append and a journal entry proves nothing;
+ * or it is keyed to somebody else, in which case every write fails at submit
+ * time with INVALID_SIGNATURE, far from the configuration that caused it.
+ *
+ * A mirror node that cannot be reached is not evidence about the topic, so
+ * that case is reported and start-up continues: a topic we cannot write to
+ * fails loudly on the first entry anyway.
+ */
+async function assertTopicIsOurs(
+  topicId: string,
+  operatorPublicKey: string,
+  network: HederaNetwork,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): Promise<void> {
+  const mirror =
+    network === "mainnet"
+      ? "https://mainnet.mirrornode.hedera.com"
+      : "https://testnet.mirrornode.hedera.com";
+
+  let topic: { submit_key?: { key?: string } | null };
+  try {
+    const response = await fetchImpl(`${mirror}/api/v1/topics/${topicId}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    topic = (await response.json()) as typeof topic;
+  } catch (cause) {
+    console.warn(
+      `  note: topic ${topicId} could not be checked on the ${network} mirror node ` +
+        `(${cause instanceof Error ? cause.message : String(cause)})`,
+    );
+    return;
+  }
+
+  const submitKey = topic.submit_key?.key?.toLowerCase() ?? "";
+  if (submitKey === "") {
+    throw new HcsJournalError(
+      `topic ${topicId} has no submit key, so anyone may append to it and an entry proves ` +
+        "nothing. Use a topic this account controls.",
+    );
+  }
+  if (submitKey !== operatorPublicKey.toLowerCase()) {
+    throw new HcsJournalError(
+      `topic ${topicId} is submit-keyed to another account, so entries from this operator ` +
+        "would be rejected. Check HCS_TOPIC_ID.",
+    );
+  }
+}
+
 export class HcsVerdictJournal implements VerdictJournal {
   readonly topicId: string;
   readonly network: HederaNetwork;
@@ -149,6 +201,18 @@ export class HcsVerdictJournal implements VerdictJournal {
     client.setOperator(options.operatorId, key);
 
     if (options.topicId !== undefined) {
+      try {
+        await assertTopicIsOurs(
+          options.topicId,
+          key.publicKey.toStringRaw(),
+          options.network,
+          options.fetch,
+        );
+      } catch (error) {
+        // The client holds network state; a refused topic must not leave it open.
+        client.close();
+        throw error;
+      }
       return new HcsVerdictJournal(client, options.topicId, options.network);
     }
 

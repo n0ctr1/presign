@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { PrivateKey } from "@hashgraph/sdk";
 
-import { resolveOperatorKey } from "../dist/index.js";
+import { HcsVerdictJournal, resolveOperatorKey } from "../dist/index.js";
 
 /** A mirror node reporting a chosen key type and public key for any account. */
 const mirror = (type: string, key: string) =>
@@ -48,5 +48,42 @@ test("a key from another account is refused by name", async () => {
   await assert.rejects(
     resolveOperatorKey(PrivateKey.generateECDSA().toStringRaw(), "0.0.42", "testnet", mirror("ECDSA_SECP256K1", theirs.publicKey.toStringRaw())),
     /not the one account 0\.0\.42 holds/,
+  );
+});
+
+/** A mirror node answering for a topic with a chosen submit key. */
+const topicMirror = (submitKey: string | null) =>
+  (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ submit_key: submitKey === null ? null : { _type: "ED25519", key: submitKey } }),
+  })) as unknown as typeof globalThis.fetch;
+
+test("a reused topic must be one this operator can actually write to", async () => {
+  const key = PrivateKey.generateED25519();
+  const der = key.toStringDer();
+  const options = { network: "testnet" as const, operatorId: "0.0.1", operatorKey: der, topicId: "0.0.2" };
+
+  const journal = await HcsVerdictJournal.open({
+    ...options,
+    fetch: topicMirror(key.publicKey.toStringRaw()),
+  });
+  assert.equal(journal.topicId, "0.0.2");
+  journal.close();
+
+  // Someone else's topic: every write would fail at submit time, far from the
+  // environment variable that caused it.
+  await assert.rejects(
+    HcsVerdictJournal.open({
+      ...options,
+      fetch: topicMirror(PrivateKey.generateED25519().publicKey.toStringRaw()),
+    }),
+    /another account/,
+  );
+
+  // No submit key at all: anyone may append, so an entry proves nothing.
+  await assert.rejects(
+    HcsVerdictJournal.open({ ...options, fetch: topicMirror(null) }),
+    /no submit key/,
   );
 });

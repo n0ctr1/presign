@@ -101,9 +101,10 @@ their staleness, and the verdict's job is to say how much it imported.
 
 It imports their availability too. Fail-closed means an unreachable gateway
 blocks the agent rather than waving it through, and a counterparty whose
-subgraph cannot answer in time — the Uniswap V3 factory, today — is blocked
-every time. That is the trade, taken deliberately: an agent that cannot get an
-answer should not act as though it got a good one.
+subgraph cannot answer in time — the Uniswap V3 factory, on the runs where its
+deployments fall behind — is blocked rather than guessed at. That is the trade,
+taken deliberately: an agent that cannot get an answer should not act as though
+it got a good one.
 
 Three things follow, and each is load-bearing rather than decorative:
 
@@ -297,7 +298,7 @@ ignore it. `npm run safety` runs the rules over twelve mainnet contracts
 nobody disputes:
 
 ```
-low: 11   unavailable: 1
+low: 12
 ```
 
 Each contract is called with a view function it answers — `totalSupply()`,
@@ -320,10 +321,13 @@ A USDC transfer out of the wallet is `low`, with the admin finding kept at
 vault pulled in by `transferFrom` — no approval and no ETH in the transaction
 itself — still counts, because that is the rug R2 exists for.
 
-The `unavailable` row is the Uniswap V3 factory, which never answers in time.
-On an earlier run Curve's 3pool joined it when a probe failed, and the next run
-returned `low` with its source named. That is fail-closed doing what it says,
-and it is also its cost.
+Twelve of twelve on 12 September 2026, and the row that moves is the Uniswap V3
+factory: its deployments are the slowest of the set, and on several earlier runs
+one of them missed the freshness budget and the contract came back
+`unavailable`. Curve's 3pool did the same once. Nothing about the contract
+changed between those runs and this one — the indexer's lag did. That is
+fail-closed doing exactly what it says, and it is also its cost, which is why
+the count here is a command rather than a claim.
 
 Running this is what found the one real false positive there was: R4 charged a human confirmation for
 Permit2, Multicall3 and Uniswap's router, on the reasoning that a contract old
@@ -339,14 +343,21 @@ network the engine maps:
 
 | schema family | mainnet | optimism | matic | base | arbitrum |
 |---|---|---|---|---|---|
-| lending-cdp | 6 | 3 | 3 | 4 | 6 |
+| lending-cdp | 6 | 3 | 3 | 3 | 7 |
 | dex-amm | 2 | 2 | 1 | 1 | 2 |
 | yield-vault | 2 | 0 | 0 | 0 | 1 |
 
 **33 conforming deployments across 3 schema families and 5 networks** — Aave
-V2/V3, Compound V2/V3, Morpho Blue, DForce, Sonne, Radiant, Seamless, Curve,
-Uniswap V3, Velodrome V2, Sushiswap, Yearn V2, Rari — reachable by the same
-rules with no per-protocol code. Nothing has to be added for a new protocol
+V2/V3, Compound V3, Morpho Blue, DForce, Sonne, Radiant, Moonwell, Curve,
+Uniswap V3, Velodrome V2, Sushiswap, Yearn V2, Rari among them — reachable by
+the same rules with no per-protocol code.
+
+Those figures were taken on **12 September 2026**, and the command will print
+today's rather than these. The conforming set moves with the health of the
+index: a deployment that is behind head, erroring or briefly unreachable is not
+counted, so both the total and the names drift by a few from run to run. That
+is the measurement working — a number that never moved would mean it was
+written down once rather than measured. Nothing has to be added for a new protocol
 inside a family that is already read; it is covered the moment somebody
 indexes it with the standard schema. What costs a line is a new family, and
 the three rows above are what those three lines bought.

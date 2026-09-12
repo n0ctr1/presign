@@ -169,7 +169,7 @@ Decoded, the manifest is:
 ```json
 {
   "x402Version": 2,
-  "resource": { "url": "http://presign.dev/verdict/full" },
+  "resource": { "url": "https://presign.dev/verdict/full" },
   "accepts": [
     { "scheme": "exact", "network": "hedera:testnet",
       "amount": "500000", "asset": "0.0.0",
@@ -433,11 +433,13 @@ https://github.com/n0ctr1/presign/blob/main/packages/mcp-server/SKILL.md
 - **Coverage runs out.** 33 conforming deployments across three schema families
   and five networks. `yield-vault` is thin: two deployments on Ethereum, one on
   Arbitrum, none elsewhere. Where R3 has nothing to read, it says so.
-- **The Uniswap V3 factory is refused.** R3's sample query for it — the
-  largest pools by value locked — does not finish inside the three-second
-  gateway timeout, so a call to the factory itself comes back `unavailable`.
-  Calls to the *pools* do not: they are checked by id and answer in about a
-  hundred milliseconds warm.
+- **The Uniswap V3 factory is the slowest thing here.** R3's sample query for
+  it — the largest pools by value locked — often does not finish inside the
+  three-second gateway timeout, and a call to the factory then comes back
+  `unavailable`; when its deployments are keeping up, it answers `low`. Either
+  way the answer says which it was. Calls to the *pools* do not have the
+  problem: they are checked by id and answer in about a hundred milliseconds
+  warm.
 - **The incident registry lags.** ScamSniffer's open list trails its real-time
   data by seven days, so a drainer from this week is not on it. Its state is
   shown on `/health` under `sources` as `incident-registry`.

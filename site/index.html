@@ -19,9 +19,12 @@
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
 /* ==========================================================================
-   PRESIGN — hackathon landing mockup, v2
+   PRESIGN — landing page for the live service
    Art direction: security engraving. Guilloché rosettes, stamped verdicts,
-   hairline hatching. Static markup, no live data.
+   hairline hatching. The ornament is generated markup; every figure and
+   verdict on the page is read from the service at the bottom of this file —
+   /health, /quote and /demo/verdict, plus the journal on Hedera's mirror
+   node — and says so when it cannot be read.
    ========================================================================== */
 
 :root{
@@ -85,8 +88,7 @@ h2.head em{font-style:italic;color:var(--violet)}
    rules themselves, or an engraved panel. */
 .sec-head{padding:clamp(40px,5.5vw,72px) 0 28px;display:grid;gap:16px;max-width:66ch}
 .ladder{max-width:none}
-/* Centred and tapering, widest line first. */
-.taper{max-width:none;text-align:center;margin:-18px 0 clamp(34px,4vw,54px)}
+.run-on{max-width:none;margin:-18px 0 clamp(34px,4vw,54px)}
 
 /* The coverage matrix as a field of hairline combs, beside the argument. */
 .cover-top{display:grid;grid-template-columns:1fr 1fr;gap:clamp(24px,4vw,56px);align-items:center}
@@ -104,10 +106,18 @@ h2.head em{font-style:italic;color:var(--violet)}
    the text it belongs to. */
 #verdicts .sec-head{max-width:74ch;margin:0 auto;justify-items:center;text-align:center;
   padding-bottom:clamp(22px,3vw,34px)}
-.weave{display:block;width:100%;height:clamp(120px,14vw,200px);
-  margin-bottom:clamp(30px,4vw,52px);transform-origin:50% 50%;
+#live-examples .sec-head{max-width:none;grid-template-columns:1.05fr .95fr;
+  gap:14px clamp(24px,4vw,56px);align-items:start;padding-bottom:clamp(20px,2.5vw,30px)}
+#live-examples .sec-head .tag{grid-column:1/-1}
+#live-examples .sec-head .head{grid-column:1;grid-row:2}
+#live-examples .sec-head .lead{grid-column:2;grid-row:2;max-width:58ch;margin:0}
+#verdicts .pad{position:relative}
+.weave{position:absolute;left:0;right:0;top:50%;width:100%;
+  height:clamp(230px,27vw,360px);z-index:0;pointer-events:none;transform-origin:50% 50%;
   animation:shimmer 26s ease-in-out infinite}
-@keyframes shimmer{0%,100%{transform:scaleY(1);opacity:.72}50%{transform:scaleY(1.12);opacity:1}}
+#verdicts .sec-head{position:relative;z-index:1}
+@keyframes shimmer{0%,100%{transform:translateY(-50%) scaleY(1);opacity:.4}
+                   50%{transform:translateY(-50%) scaleY(1.14);opacity:.62}}
 
 .btn{border:1px solid var(--line-2);padding:8px 16px;font-size:12.5px;font-family:inherit;
      background:transparent;color:var(--fg);cursor:pointer;display:inline-block}
@@ -149,9 +159,26 @@ nav a:hover{color:var(--violet)}
            animation:turn 220s linear infinite, breathe 19s ease-in-out infinite}
 @keyframes turn{to{transform:rotate(-360deg)}}
 @keyframes breathe{0%,100%{opacity:.46}50%{opacity:.6}}
-.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.02fr .98fr}
-.hero-l{padding:clamp(46px,6vw,88px) clamp(16px,3.2vw,44px) 40px}
-.hero-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center}
+/* One block and no wrapper. The card is lifted out of the flow and pinned
+   between the block's own top and bottom insets with auto margins, so it
+   centres against the text rather than against the padding box — an
+   asymmetric pad (88 above, 40 below) is what made it sit low before. The
+   text keeps clear of it, and the section's height stays the text's.
+
+   A grid was the obvious alternative and the wrong one: with no explicit
+   rows, a card spanning `1 / -1` collapses into the first row, sets that
+   row's height, and pushes the headline below its own middle. */
+.hero-grid{position:relative;z-index:1;padding:clamp(46px,6vw,88px) clamp(16px,3.2vw,44px)}
+.hero-grid > *{max-width:calc(100% - 500px)}
+.hero-grid > .intercept{position:absolute;max-width:none;width:min(460px,38vw);
+  right:clamp(16px,3.2vw,44px);top:clamp(46px,6vw,88px);bottom:clamp(46px,6vw,88px);
+  height:fit-content;margin-block:auto}
+/* Trimmed to its content rather than run to the column edge. */
+.hero-grid > .cmd{width:max-content;max-width:100%}
+/* Same as the escalation block: the card is a grid item rather than a padded
+   column beside one, so nothing reads as a seam between the two halves. */
+.hero-grid > .intercept{grid-column:2;align-self:center;
+  margin:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px) clamp(30px,4vw,52px) 0}
 
 h1{font-size:clamp(38px,6vw,74px);line-height:.98;letter-spacing:-.03em;font-weight:500;margin:24px 0 22px}
 h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:italic;
@@ -243,29 +270,39 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 /* The argument and the device are one thought — the verdict is what lands on
    that screen — so no rail divides them. A rosette sits on the seam instead,
    whole, straddling it the way a seal straddles a join. */
-.esc{display:grid;grid-template-columns:1fr 440px;border-top:var(--rail);
-     position:relative;overflow:hidden}
-.esc-seam{position:absolute;left:calc(100% - 440px);bottom:0;width:420px;height:420px;
-          transform:translate(-50%,50%);opacity:.34;pointer-events:none;z-index:0}
-.esc-l{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);position:relative;z-index:1}
-/* No overflow clip here: with the rail gone, clipping at the column edge cut
-   the halo along a straight line exactly where the border used to be. It
-   bleeds across the seam now, and only the section's own edges bound it. */
-.esc-r{padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px);display:flex;align-items:center;
-       justify-content:flex-start;position:relative;z-index:1}
-.esc-r /* As large as the section is tall, and no larger: a floor under the section
-   made it big at the cost of stretching the flow diagram beside it down the
-   page, which is a worse trade than a smaller rosette. */
+.esc{border-top:var(--rail);position:relative;overflow:hidden;
+     padding:clamp(30px,4vw,52px) clamp(16px,3.2vw,44px)}
+/* One right edge for everything in the column: the heading, the paragraph and
+   the diagram all stop at the same line, and all of them clear the device. */
+#escalation > .esc > *{max-width:min(560px, calc(100% - 360px))}
+/* No clip on the block: with the rail gone, clipping at the column edge cut
+   the halo along a straight line exactly where the border used to be. Only
+   the section's own edges bound it now. */
+
+/* The device is a grid item of the block itself: no wrapper, and no padding
+   column between the argument and the screen a verdict lands on. */
+#escalation .device{position:absolute;max-width:none;width:330px;z-index:1;
+  right:clamp(80px,10vw,190px);top:clamp(30px,4vw,52px);bottom:clamp(30px,4vw,52px);
+  height:fit-content;margin-block:auto}
+
+/* As large as the section is tall, and no larger: a floor under the section
+   made it bigger at the cost of stretching the flow diagram down the page. */
 .halo{position:absolute;width:460px;height:460px;opacity:.35;pointer-events:none}
-.flow{display:grid;font-size:12px;margin-top:28px;max-width:520px}
+/* At the block's edge rather than inside its padding, and still whole. */
+#escalation .halo{width:560px;height:560px;right:-160px;top:-150px;transform:none}
+.esc-seam{position:absolute;left:calc(100% - 355px);bottom:0;width:420px;height:420px;
+          transform:translate(-50%,50%);opacity:.34;pointer-events:none;z-index:0}
+.flow{display:grid;font-size:12px;margin-top:28px;max-width:min(560px,100%)}
 .node{border:1px solid var(--line);padding:12px 14px;background:var(--ink-2);display:flex;gap:14px;align-items:center}
 .node .lbl{color:var(--dim);font-size:10.5px;letter-spacing:.1em;width:88px;flex:none}
 .arrow{height:24px;border-left:1px dashed var(--line-2);margin-left:24px}
 .branch{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.branch .node{flex-direction:column;align-items:flex-start;gap:5px}
+.branch .node .lbl{width:auto}
 .node.ok{border-color:rgba(61,230,168,.38)}
-.node.esc{border-color:rgba(255,176,32,.45)}
+.node.med{border-color:rgba(255,176,32,.45)}
 
-.device{position:relative;z-index:1;width:290px;border:1px solid var(--line-2);background:var(--ink-3)}
+.device{position:relative;z-index:1;width:330px;border:1px solid var(--line-2);background:var(--ink-3)}
 .device .screen{background:#04060C;border-bottom:1px solid var(--line);padding:18px 16px;min-height:158px}
 .device .t{font-size:10px;color:var(--gold);letter-spacing:.16em}
 .device .m{font-size:13.5px;margin-top:14px;line-height:1.45}
@@ -353,9 +390,10 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 
 /* ---------- numbers ---------- */
 .nums{display:grid;grid-template-columns:repeat(4,1fr);border-top:var(--rail)}
+.num:nth-child(4n){border-right:0}
+.num:nth-child(-n+4){border-bottom:var(--rail)}
 /* Three figures, not four with a hole where a fourth used to be. */
-.nums.three{grid-template-columns:repeat(3,1fr)}
-.num{padding:24px clamp(10px,1.4vw,18px) 26px;border-right:var(--rail)}
+.num{padding:22px clamp(10px,1.4vw,18px) 24px;border-right:var(--rail)}
 .num:last-child{border-right:0}
 .num .big{font-family:"Instrument Serif",serif;font-size:clamp(30px,4vw,44px);line-height:1}
 .num .lb{font-size:11.5px;color:var(--dim);margin-top:0}
@@ -369,7 +407,7 @@ h1 .l2{display:block;font-family:"Instrument Serif",Georgia,serif;font-style:ita
 .nums-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
 .nums-head .live-note{padding:0;max-width:none}
 .one-line{max-width:none}
-@media (min-width:900px){.one-line span{white-space:nowrap}}
+
 .live-note{display:flex;gap:8px;align-items:baseline;max-width:92ch;
            font-size:10.5px;color:var(--dim);letter-spacing:.08em;line-height:1.6;
            padding:16px clamp(14px,2vw,26px) 28px}
@@ -411,19 +449,26 @@ footer a:hover{color:var(--violet)}
 
 /* ---------- responsive ---------- */
 @media (max-width:900px){
-  .pipe-wrap,.cover-top{grid-template-columns:1fr}
+  .pipe-wrap,.cover-top,#live-examples .sec-head{grid-template-columns:1fr}
+  #live-examples .sec-head .head,#live-examples .sec-head .lead{grid-column:1;grid-row:auto}
   #pipeline .pipe{border-left:0;border-top:var(--rail)}
   .ticks{display:none}
 }
 @media (max-width:1040px){
-  .hero-grid,.esc,.paper-grid{grid-template-columns:1fr}
+  .paper-grid{grid-template-columns:1fr}
+  /* Stacked, nothing is lifted out of the flow. */
+  .hero-grid > *,#escalation > .esc > *{max-width:none}
+  .hero-grid > .intercept,#escalation .device{position:static;width:auto;
+    height:auto;margin:clamp(24px,4vw,40px) 0 0}
+  #escalation .halo,.esc-seam{display:none}
   .paper-l{border-right:0;border-bottom:var(--rail)}
-  .esc-l{border-right:0}
-  .esc-seam{display:none}
   .paper-l{border-bottom:1px solid rgba(20,24,28,.18)}
   .pipe,.nums{grid-template-columns:1fr 1fr}
-  .step:nth-child(2),.num:nth-child(2){border-right:0}
-  .step:nth-child(-n+2),.num:nth-child(-n+2){border-bottom:var(--rail)}
+  .step:nth-child(2){border-right:0}
+  .step:nth-child(-n+2){border-bottom:var(--rail)}
+  .num:nth-child(2n){border-right:0}
+  .num:nth-child(-n+6){border-bottom:var(--rail)}
+  .num:nth-child(n+7){border-bottom:0}
   .stamps{grid-template-columns:1fr}
   .stamp{border-right:0;border-bottom:var(--rail)}
   .stamp:last-child{border-bottom:0}
@@ -528,7 +573,6 @@ footer a:hover{color:var(--violet)}
     <svg class="watermark" id="wm" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
 
     <div class="hero-grid">
-      <div class="hero-l">
         <p class="tag">PRE-SIGNATURE RISK FOR AGENT WALLETS · <b>live on Hedera testnet</b></p>
         <h1>Every verdict says<span class="l2">how stale it is.</span></h1>
         <p class="lead ladder">
@@ -554,9 +598,7 @@ footer a:hover{color:var(--violet)}
           <span class="chip">OPTIMISM</span><span class="chip">POLYGON</span><span class="chip">THE GRAPH</span>
           <span class="chip">HEDERA</span><span class="chip">LEDGER</span><span class="chip">x402</span><span class="chip">MCP</span>
         </div>
-      </div>
 
-      <div class="hero-r">
         <div class="intercept">
           <div class="ip-top"><span>VERDICT</span><span class="id">POST /verdict/full · 2751 ms</span></div>
           <div class="ip-body">
@@ -585,7 +627,6 @@ footer a:hover{color:var(--violet)}
             <span>journalled <b>topic 0.0.10413192</b></span>
           </div>
         </div>
-      </div>
     </div>
 
     <!-- The signature is drawn, then stops dead at the checkpoint. -->
@@ -743,11 +784,10 @@ footer a:hover{color:var(--violet)}
       <div class="sec-head">
         <p class="tag">LIVE ON THIS INSTANCE</p>
         <h2 class="head">Three transactions, <em>judged while you watch.</em></h2>
-        <p class="lead">Fixed examples rather than a box for arbitrary calldata: agents send their
-          own transactions to the paid routes, and a public endpoint that simulates whatever anyone
-          pastes is an abuse surface held back by a rate limit you would have to trust. Each answer
-          is computed on a mainnet fork by this instance, reused for a minute, and stamped with its
-          own age — if the fork goes down you get the last real verdict and the seconds since.</p>
+        <p class="lead">Fixed examples, not a box for arbitrary calldata: agents send their own
+          transactions to the paid routes. Each answer below is computed on a mainnet fork by this
+          instance, reused for a minute, and stamped with its own age — if the fork goes down you
+          get the last real verdict and the seconds since it was real.</p>
       </div>
       <div class="live">
         <div class="picks">
@@ -785,9 +825,7 @@ footer a:hover{color:var(--violet)}
   <!-- ================= ESCALATION ================= -->
   <section id="escalation">
     <div class="esc">
-      <svg class="esc-seam" id="ros-seam" viewBox="-260 -260 520 520" aria-hidden="true"></svg>
-      <div class="esc-l">
-        <p class="tag">THE DEVICE IS NOT A NOTIFICATION</p>
+      <p class="tag">THE DEVICE IS NOT A NOTIFICATION</p>
         <h2 class="head" style="margin:16px 0 18px">Only <em>medium</em> reaches a human.<br><em>High never does.</em></h2>
         <p class="lead">Showing somebody a transaction already judged dangerous invites approval,
           because a prompt is a request and people approve prompts. The policy is re-checked inside
@@ -796,26 +834,24 @@ footer a:hover{color:var(--violet)}
         <div class="flow">
           <div class="node"><span class="lbl">AGENT</span><span>builds the intent · holds the key</span></div>
           <div class="arrow"></div>
-          <div class="node esc"><span class="lbl">PRESIGN</span><span>tier + findings + provenance</span></div>
+          <div class="node med"><span class="lbl">PRESIGN</span><span>tier + findings + provenance</span></div>
           <div class="arrow"></div>
           <div class="branch">
             <div class="node ok"><span class="lbl" style="width:auto">LOW</span><span>signs unattended</span></div>
-            <div class="node esc"><span class="lbl" style="width:auto">MEDIUM</span><span>→ Ledger, clear-signed</span></div>
+            <div class="node med"><span class="lbl" style="width:auto">MEDIUM</span><span>→ Ledger, clear-signed</span></div>
           </div>
         </div>
-      </div>
 
-      <div class="esc-r">
-        <svg class="halo" id="halo" viewBox="-320 -280 550 550" aria-hidden="true"></svg>
-        <div class="device" role="img" aria-label="Hardware wallet screen showing an escalated confirmation">
+      <svg class="halo" id="halo" viewBox="-280 -280 560 560" aria-hidden="true"></svg>
+      <svg class="esc-seam" id="ros-seam" viewBox="-280 -280 560 560" aria-hidden="true"></svg>
+      <div class="device" role="img" aria-label="Hardware wallet screen showing an escalated confirmation">
           <div class="screen">
             <p class="t">PRESIGN · CONFIRM</p>
             <p class="m">Approve <b>1 000 USDC</b> for Permit2.</p>
             <p class="m" style="color:var(--fg-2)">USDC is an upgradeable proxy; its admin is a plain EOA.</p>
             <p class="f">decline reads as 6985 — a decision, not a fault</p>
           </div>
-          <div class="keys"><div>◀ Reject</div><div>Hold to approve ▶</div></div>
-        </div>
+        <div class="keys"><div>◀ Reject</div><div>Hold to approve ▶</div></div>
       </div>
     </div>
   </section>
@@ -906,13 +942,10 @@ footer a:hover{color:var(--violet)}
           <tr><th>yield-vault</th><td class="ok">2</td><td class="soon">0</td><td class="soon">0</td><td class="soon">0</td><td class="ok">1</td></tr>
         </tbody>
       </table>
-      <p class="lead taper">
-        33 conforming deployments — Aave V2 and V3, Compound V2 and V3, Morpho Blue,<br>
-        DForce, Sonne, Radiant, Seamless, Curve, Uniswap V3, Velodrome V2,<br>
-        Sushiswap, Yearn V2, Rari — reachable with no code per protocol.<br>
-        The thin row is honest too: <em>yield-vault</em> is where<br>
-        this coverage runs out.
-      </p>
+      <p class="lead run-on">33 conforming deployments — Aave V2 and V3, Compound V2 and V3,
+        Morpho Blue, DForce, Sonne, Radiant, Seamless, Curve, Uniswap V3, Velodrome V2, Sushiswap,
+        Yearn V2, Rari — reachable with no code per protocol. The thin row is honest too:
+        <em>yield-vault</em> is where this coverage runs out.</p>
     </div>
   </section>
 
@@ -990,7 +1023,6 @@ budget  1s  →  <span class="y">unavailable</span>
       </div>
       </div>
       </div>
-      <div style="height:clamp(34px,4vw,54px)"></div>
     </div>
   </section>
 
@@ -1001,20 +1033,19 @@ budget  1s  →  <span class="y">unavailable</span>
       <p class="live-note" id="live-note"><i></i><span>reading /health…</span></p>
     </div>
     <div class="nums">
-      <div class="num"><p class="big pending" id="n-journal">—</p><p class="lb">entries in the Hedera journal, our own test calls included</p></div>
+      <div class="num"><p class="big pending" id="n-journal">—</p><p class="lb">entries in the Hedera journal</p></div>
       <div class="num"><p class="big pending" id="n-rules">—</p><p class="lb">rules this instance runs</p></div>
-      <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks in the current watch window</p></div>
-      <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR for a full verdict, by data checked</p></div>
-    </div>
-
-    <div class="nums three">
-      <div class="num"><p class="big">394 ms</p><p class="lb">cold verdict on USDC, whole call</p></div>
+      <div class="num"><p class="big pending" id="n-blocks">—</p><p class="lb">blocks in the watch window</p></div>
+      <div class="num"><p class="big pending" id="n-price">—</p><p class="lb">HBAR, by data checked</p></div>
+      <div class="num"><p class="big">394 ms</p><p class="lb">cold verdict on USDC</p></div>
       <div class="num"><p class="big">8 ms</p><p class="lb">warm, same counterparty</p></div>
-      <div class="num"><p class="big">0</p><p class="lb">of 12 undisputed mainnet contracts refused</p></div>
+      <div class="num"><p class="big">0</p><p class="lb">of 12 mainnet contracts refused</p></div>
+      <div class="num"><p class="big">325</p><p class="lb">tests, green on every push</p></div>
     </div>
     <p class="live-note one-line" style="opacity:.85"><i></i>
-      <span>Cold is the first verdict for a counterparty, warm the repeats after it; the fixture exits
-      non-zero if anything reaches <em>high</em>.</span></p>
+      <span>Top row live from <em>/health</em>, bottom row measured on this build. Cold is the
+      first verdict for a counterparty, warm the repeats. The watch window restarts with the
+      process; the journal does not.</span></p>
   </section>
 
   <!-- ================= CTA ================= -->
@@ -1118,6 +1149,7 @@ function drawSeal(svg, color) {
 
 drawRosette(document.getElementById("wm"),        { color: "#8B6BFF", rings: 6, turns: 53 });
 drawRosette(document.getElementById("halo"),      { color: "#FFB020", rings: 4, r: 39, turns: 39, width: 0.45 });
+drawRosette(document.getElementById("ros-seam"),  { color: "#8B6BFF", rings: 5, r: 45, turns: 45, width: 0.5 });
 /* Straight-line guilloché: sine curves whose amplitude swells in the middle
    of the band and whose frequency drifts across it, so the strokes interfere
    the way engine-turned engraving does — without a circle anywhere. */
@@ -1143,34 +1175,39 @@ function drawWeave(svg, opts) {
 }
 drawWeave(document.getElementById("weave"), {});
 
-/* The coverage table as engraving: one hairline per conforming deployment,
-   combed into a group per chain. Where a family reaches nothing the group is a
-   dotted rule rather than blank space — the gap is the honest part. */
-function drawTicks(svg, rows) {
+/* The coverage table as a hatched matrix — five chains across, three schema
+   families down, and the density of the hatch is the number of conforming
+   deployments. A family that reaches nothing on a chain is an empty cell with
+   a dotted rule: the gap is the honest part, so it is drawn rather than left
+   as absence. Diagonals are clipped to their cell by arithmetic rather than
+   fifteen clip paths. */
+function drawHatch(svg, rows) {
+  const M = 16, W = 88, H = 68, GX = 12, GY = 12;
   let markup = "";
   rows.forEach(function (counts, r) {
-    const base = 62 + r * 82;
-    markup += '<line x1="24" y1="' + base + '" x2="496" y2="' + base + '" stroke="#2E3C58" stroke-width="1"/>';
+    const y = M + r * (H + GY);
     counts.forEach(function (n, c) {
-      const x0 = 36 + c * 94;
-      if (n === 0) {
-        markup += '<line x1="' + x0 + '" y1="' + (base - 8) + '" x2="' + (x0 + 46) + '" y2="' + (base - 8) +
-                  '" stroke="#61708E" stroke-width="1" stroke-dasharray="2 4" opacity=".7"/>';
-        return;
-      }
-      for (let i = 0; i < n; i++) {
-        const x = x0 + i * 8;
-        const h = 14 + (i % 3) * 5 + n * 2.4;
-        markup += '<line x1="' + x + '" y1="' + base + '" x2="' + x + '" y2="' + (base - h).toFixed(1) +
-                  '" stroke="#8B6BFF" stroke-width="1.6" opacity="' + (0.55 + 0.05 * (i % 3)).toFixed(2) + '"/>';
+      const x = M + c * (W + GX);
+      markup += '<rect x="' + x + '" y="' + y + '" width="' + W + '" height="' + H + '"' +
+                ' fill="none" stroke="#2E3C58" stroke-width="1"' +
+                (n === 0 ? ' stroke-dasharray="3 4" opacity=".8"' : ' opacity=".9"') + '/>';
+      if (n === 0) return;
+      const first = x + y, last = x + W + y + H, step = (last - first) / (n + 1);
+      for (let i = 1; i <= n; i++) {
+        const k = first + step * i;
+        const x1 = Math.max(x, k - (y + H)), y1 = Math.min(y + H, k - x);
+        const x2 = Math.min(x + W, k - y), y2 = Math.max(y, k - (x + W));
+        markup += '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) +
+                  '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) +
+                  '" stroke="#8B6BFF" stroke-width="1.4" opacity="' +
+                  (0.42 + 0.05 * (i % 3)).toFixed(2) + '"/>';
       }
     });
   });
   svg.innerHTML = markup;
 }
-drawTicks(document.getElementById("ticks"), [[6, 3, 3, 4, 6], [2, 2, 1, 1, 2], [2, 0, 0, 0, 1]]);
+drawHatch(document.getElementById("ticks"), [[6, 3, 3, 4, 6], [2, 2, 1, 1, 2], [2, 0, 0, 0, 1]]);
 
-drawRosette(document.getElementById("ros-seam"),  { color: "#8B6BFF", rings: 5, r: 45, turns: 45, width: 0.5 });
 drawRosette(document.getElementById("ros-cta"),   { color: "#8B6BFF", rings: 7, r: 43, turns: 61, width: 0.45 });
 
 const sealColors = { ok: "#3DE6A8", esc: "#FFB020", deny: "#FF4E6A", una: "#7E93C4" };
@@ -1274,8 +1311,7 @@ tabs.forEach(function (tab) {
 
     if (stream && stream.live) {
       say("on", "live · " + (health.rules || []).join(", ") +
-                " · watching from block " + group(stream.firstBlock) +
-                ", which restarts with the process — the journal does not");
+                " · watching from block " + group(stream.firstBlock));
     } else if (stream) {
       say("off", "the upgrade stream is not live — R2 reports its history as unavailable, " +
                  "which is the honest answer for an index that has seen nothing yet");

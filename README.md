@@ -2,9 +2,9 @@
 
 **Risk verdicts for agent wallets that declare how stale their evidence was.**
 
-Live at **https://presign.dev** — x402-gated on Hedera testnet, settled through
-Blocky402. `GET /quote` and `GET /health` need no key; agents read
-[`/llms.txt`](https://presign.dev/llms.txt).
+Live at **https://presign.dev** — three transactions on the page are judged by
+that instance while you read it. `GET /quote` and `GET /health` need no key;
+agents read [`/llms.txt`](https://presign.dev/llms.txt).
 
 An autonomous agent holding a key signs whatever its planner hands it. `presign`
 answers one question before that signature — *is this safe to sign?* — and
@@ -12,6 +12,27 @@ attaches the thing that makes the answer checkable: which data it rested on, and
 how far behind chain head that data was.
 
 The second half is the part nobody else returns.
+
+![How a verdict is produced: an unsigned transaction is simulated on a mainnet fork, four rules read the state diff and indexed data, and the verdict carries a tier and the lag of the evidence behind it.](docs/verdict-flow.svg)
+
+**In ten lines:**
+
+- An agent sends an **unsigned** transaction. It comes back with a tier, the
+  findings, and the provenance — *which deployment answered and how far behind
+  chain head it was*.
+- `unavailable` is a tier, not an error: a rule that cannot get fresh data has
+  no way to report "nothing found". **Same call to Aave, budget 30s → `low`;
+  budget 1s → `unavailable`.** Try both on the landing page.
+- Rules read the **state diff from a mainnet fork**, not the calldata, so an
+  approval buried in a smart account's `execute` is still an approval.
+- Paid per call over **x402 on Hedera**, metered by the indexed deployments the
+  verdict actually reads, and journalled to **Hedera Consensus Service** under a
+  salted commitment.
+- Indexed protocol data comes from **The Graph**, through an operational layer
+  that measures conformance and liveness rather than trusting a manifest; proxy
+  upgrade history streams from **Substreams**.
+- A model can buy a verdict over **MCP**, and sign through one: `low` signs,
+  `medium` goes to a **Ledger** for a human, `high` never reaches the device.
 
 ## The claim, demonstrated
 
@@ -114,46 +135,6 @@ rather than an error.
 and never stands in the path of funds. Co-signing would give stronger lock-in and
 moves the project into custodial territory with the legal consequences that follow;
 that is a deliberate trade, not an oversight.
-
-### Known limits
-
-These are the ways a `low` can still be wrong, written down because a verdict
-whose blind spots go unstated invites more trust than it has earned.
-
-- **R4 counts any manifest.** A counterparty is identified once any deployment
-  in the registry names it, whatever that deployment's age, signal or health,
-  and the contract's age is then not checked. Deploying a drainer and
-  publishing a trivial subgraph that names it silences R4 once the registry
-  picks the subgraph up.
-- **R2 trusts a delay getter.** An admin contract counts as a timelock when
-  `getMinDelay()` or `delay()` returns a non-zero value, and a catch-all
-  fallback can return one. UUPS and beacon proxies, whose admin slot is empty,
-  are reported at `info` and never raise the tier; diamond proxies are not
-  detected.
-- **R3 samples a protocol it matched directly.** When a deployment indexes the
-  counterparty by its own address, R3 checks the protocol's ten largest markets
-  rather than the market the transaction touches. Only pools resolved through
-  their factory are checked by id, so a breach in a small market can sit
-  outside the sample.
-- **R1 sees Solidity's nested mapping.** Allowances kept in another layout —
-  Permit2's triple mapping, packed slots — are not proven, and neither is a
-  spender packed into calldata without ABI padding and touched nowhere in
-  state.
-- **The journal shows the shape of a decision.** The salt hides the
-  transaction, but an entry still names the deployment that answered, which
-  says what protocol the counterparty belongs to, and its consensus timestamp
-  lands seconds before the agent broadcasts. Matching the two by time and
-  protocol is realistic for anyone watching the mempool.
-- **Dependencies carry advisories.** `npm audit --omit=dev` reports 32
-  vulnerabilities, one critical, all in transitive dependencies of the Ledger
-  DMK and the Hedera SDK: `protobufjs`, `@grpc/grpc-js`, `undici`, `ws` and the
-  React Native tree the Hedera SDK pulls in through its cryptography package.
-  Exploitability here is unconfirmed — the protobuf schemas are local, though
-  gRPC and undici do sit on network paths. Pinning them through npm `overrides`
-  was tried and does not take effect on this graph: npm records the override
-  and resolves the same versions. The alternative is regenerating the lockfile
-  or forcing major bumps of the SDKs, which is not a change to make without
-  running the device and the stream against it afterwards.
 
 ## Architecture
 
@@ -492,6 +473,46 @@ entirely from data bought a cent at a time. A settlement picked from that run
 resolves on Base: 0.01 USDC from the payer to the `payTo` in the gateway's own
 manifest, gas paid by the facilitator rather than by us.
 
+### Known limits
+
+These are the ways a `low` can still be wrong, written down because a verdict
+whose blind spots go unstated invites more trust than it has earned.
+
+- **R4 counts any manifest.** A counterparty is identified once any deployment
+  in the registry names it, whatever that deployment's age, signal or health,
+  and the contract's age is then not checked. Deploying a drainer and
+  publishing a trivial subgraph that names it silences R4 once the registry
+  picks the subgraph up.
+- **R2 trusts a delay getter.** An admin contract counts as a timelock when
+  `getMinDelay()` or `delay()` returns a non-zero value, and a catch-all
+  fallback can return one. UUPS and beacon proxies, whose admin slot is empty,
+  are reported at `info` and never raise the tier; diamond proxies are not
+  detected.
+- **R3 samples a protocol it matched directly.** When a deployment indexes the
+  counterparty by its own address, R3 checks the protocol's ten largest markets
+  rather than the market the transaction touches. Only pools resolved through
+  their factory are checked by id, so a breach in a small market can sit
+  outside the sample.
+- **R1 sees Solidity's nested mapping.** Allowances kept in another layout —
+  Permit2's triple mapping, packed slots — are not proven, and neither is a
+  spender packed into calldata without ABI padding and touched nowhere in
+  state.
+- **The journal shows the shape of a decision.** The salt hides the
+  transaction, but an entry still names the deployment that answered, which
+  says what protocol the counterparty belongs to, and its consensus timestamp
+  lands seconds before the agent broadcasts. Matching the two by time and
+  protocol is realistic for anyone watching the mempool.
+- **Dependencies carry advisories.** `npm audit --omit=dev` reports 32
+  vulnerabilities, one critical, all in transitive dependencies of the Ledger
+  DMK and the Hedera SDK: `protobufjs`, `@grpc/grpc-js`, `undici`, `ws` and the
+  React Native tree the Hedera SDK pulls in through its cryptography package.
+  Exploitability here is unconfirmed — the protobuf schemas are local, though
+  gRPC and undici do sit on network paths. Pinning them through npm `overrides`
+  was tried and does not take effect on this graph: npm records the override
+  and resolves the same versions. The alternative is regenerating the lockfile
+  or forcing major bumps of the SDKs, which is not a change to make without
+  running the device and the stream against it afterwards.
+
 ## Repository layout
 
 ```
@@ -506,6 +527,7 @@ packages/verdict-mcp         lets a model buy a verdict as an MCP tool
 packages/agent               an agent that buys a verdict before signing
 packages/demo                runnable end-to-end demonstration
 packages/mcp-server          MCP surface + SKILL.md for other agents
+packages/substreams          proxy upgrade history, streamed from Substreams
 packages/secrets             credential resolution with declared provenance
 docs/feedback/               per-partner tooling feedback, written as we go
 docs/setup/                  device and environment runbooks

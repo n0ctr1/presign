@@ -74,6 +74,14 @@ produced. Read `sources[].live` before trusting an absence. When the proxy upgra
 is not live, rule R2 reports upgrade history as unavailable rather than clean —
 a stopped stream's silence is not evidence that nothing happened.
 
+### `GET /demo/examples`, `GET /demo/verdict?example=…&budget=…`
+
+The three fixed transactions the landing page shows, judged live by this
+instance on a mainnet fork, with one answer cached per example and budget. They
+exist for human readers; you have the paid routes below and can send your own
+transaction. The answer carries `computed.age_seconds` — how old this answer is
+— which is the same question the verdict answers about its own evidence.
+
 ### `GET /quote`
 
 What a verdict costs and what it buys, before you commit to buying one.

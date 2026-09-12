@@ -111,9 +111,20 @@ presign.dev {
 	request_body @verdict {
 		max_size 320KiB
 	}
-	reverse_proxy presign:4021
+	# Same origin, so the landing page reads /health, /quote and its live
+	# examples with no CORS and no key.
+	@api path /health /quote /demo/* /verdict/*
+	reverse_proxy @api presign:4021
+	root * /srv/site
+	file_server
 }
 ```
+
+Edit that file **in place**. It is bind-mounted into the Caddy container by
+path, and `sed -i` writes a new file under the same name: the container keeps
+reading the old inode, a reload reports success, and the route you just added
+answers 404. Either write it with a truncating redirect, or restart the
+container after replacing it.
 
 The service refuses a larger body with `413` on its own, but only after the
 proxy has started streaming it. The connection is then closed with bytes still

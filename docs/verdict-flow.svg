@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 430" width="1000" height="430" role="img"
+     aria-label="An unsigned transaction is simulated on a mainnet fork; four rules read the state diff and indexed data; the verdict carries a tier and the lag of the evidence behind it.">
+  <rect width="1000" height="430" fill="#E9E3D5"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#14181C">
+
+    <!-- input -->
+    <rect x="24" y="150" width="150" height="70" fill="none" stroke="#14181C" stroke-width="1.5"/>
+    <text x="99" y="180" font-size="14" text-anchor="middle">unsigned</text>
+    <text x="99" y="200" font-size="14" text-anchor="middle">transaction</text>
+
+    <!-- simulation -->
+    <path d="M174 185 H214" stroke="#14181C" stroke-width="1.5"/>
+    <path d="M206 180 l8 5 -8 5 z" fill="#14181C"/>
+    <rect x="214" y="140" width="176" height="90" fill="none" stroke="#14181C" stroke-width="1.5"/>
+    <text x="302" y="168" font-size="14" text-anchor="middle">mainnet fork</text>
+    <text x="302" y="189" font-size="12" text-anchor="middle" fill="#6A6558">anvil, re-forked at 60s</text>
+    <text x="302" y="210" font-size="12" text-anchor="middle" fill="#6A6558">state diff, not calldata</text>
+
+    <!-- rules -->
+    <path d="M390 185 H430" stroke="#14181C" stroke-width="1.5"/>
+    <path d="M422 180 l8 5 -8 5 z" fill="#14181C"/>
+    <rect x="430" y="70" width="250" height="230" fill="none" stroke="#14181C" stroke-width="1.5"/>
+    <text x="555" y="96" font-size="13" text-anchor="middle" fill="#6A6558">RULES OVER THE DIFF</text>
+    <text x="450" y="128" font-size="13">R1  approvals + blacklist</text>
+    <text x="450" y="156" font-size="13">R2  mutable logic, exposure</text>
+    <text x="450" y="184" font-size="13">R3  protocol invariants</text>
+    <text x="450" y="212" font-size="13">R4  unidentified counterparty</text>
+    <path d="M450 232 H660" stroke="#14181C" stroke-width="0.75" stroke-dasharray="3 3"/>
+    <text x="450" y="254" font-size="12" fill="#6A6558">R3 and R4 read indexed data,</text>
+    <text x="450" y="272" font-size="12" fill="#6A6558">and import its staleness</text>
+
+    <!-- the graph -->
+    <rect x="430" y="330" width="250" height="66" fill="none" stroke="#6A6558" stroke-width="1.5"/>
+    <text x="555" y="356" font-size="13" text-anchor="middle">The Graph — deployments</text>
+    <text x="555" y="376" font-size="12" text-anchor="middle" fill="#6A6558">conformance + liveness + lag</text>
+    <path d="M555 330 V300" stroke="#6A6558" stroke-width="1.5"/>
+    <path d="M550 308 l5 -8 5 8 z" fill="#6A6558"/>
+
+    <!-- verdict -->
+    <path d="M680 185 H720" stroke="#14181C" stroke-width="1.5"/>
+    <path d="M712 180 l8 5 -8 5 z" fill="#14181C"/>
+    <rect x="720" y="70" width="256" height="160" fill="none" stroke="#14181C" stroke-width="1.5"/>
+    <text x="848" y="96" font-size="13" text-anchor="middle" fill="#6A6558">VERDICT</text>
+    <text x="740" y="126" font-size="13">tier</text>
+    <text x="740" y="152" font-size="13">findings with evidence</text>
+    <text x="740" y="178" font-size="13">provenance: which deployment</text>
+    <text x="740" y="200" font-size="13">answered, and its lag</text>
+    <text x="740" y="222" font-size="12" fill="#6A6558">journalled to Hedera, salted</text>
+
+    <!-- outcomes -->
+    <rect x="720" y="250" width="256" height="146" fill="none" stroke="#14181C" stroke-width="1.5"/>
+    <text x="740" y="278" font-size="13">low</text>
+    <text x="820" y="278" font-size="13" fill="#6A6558">the agent signs</text>
+    <text x="740" y="306" font-size="13">medium</text>
+    <text x="820" y="306" font-size="13" fill="#6A6558">a human, on a Ledger</text>
+    <text x="740" y="334" font-size="13">high</text>
+    <text x="820" y="334" font-size="13" fill="#6A6558">refused, never shown</text>
+    <text x="740" y="362" font-size="13">unavailable</text>
+    <text x="820" y="362" font-size="13" fill="#6A6558">not evaluated</text>
+    <text x="740" y="384" font-size="12" fill="#6A6558">not the same as safe</text>
+
+    <!-- the claim -->
+    <rect x="24" y="300" width="366" height="96" fill="none" stroke="#6A6558" stroke-width="1.5"/>
+    <text x="44" y="328" font-size="13">budget 30s  →  low</text>
+    <text x="44" y="352" font-size="13">budget  1s  →  unavailable</text>
+    <text x="44" y="378" font-size="12" fill="#6A6558">same call, same data, only the budget</text>
+  </g>
+</svg>

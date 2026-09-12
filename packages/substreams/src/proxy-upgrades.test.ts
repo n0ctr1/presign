@@ -205,15 +205,29 @@ test("a bounded backfill gives up; an unbounded one keeps trying", async () => {
     () => { settled = true; },
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  // Still going after the first failure, where the old version would have
-  // returned and left the index frozen while it went on answering queries.
-  assert.equal(settled, false);
-  assert.equal(unbounded.live, false, "a stream that cannot connect is not live");
-  assert.ok(unbounded.failure !== null, "the reason is recorded, not only thrown");
-
-  unbounded.stop();
-  await running;
+  /*
+   * Waited for rather than slept through, and stopped in a `finally`.
+   *
+   * This used to sleep 300ms and then assert. How long a refused connection
+   * takes to be refused is not the behaviour under test, and on a CI runner it
+   * took longer than that: the assertion failed, `stop()` never ran, and the
+   * retry loop held the process open until the job was killed eight minutes
+   * later. A failing assertion should fail a test, not hang a build.
+   */
+  try {
+    const deadline = Date.now() + 10_000;
+    while (unbounded.failure === null && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(unbounded.failure !== null, "the reason is recorded, not only thrown");
+    // Still going after the first failure, where the old version would have
+    // returned and left the index frozen while it went on answering queries.
+    assert.equal(settled, false);
+    assert.equal(unbounded.live, false, "a stream that cannot connect is not live");
+  } finally {
+    unbounded.stop();
+    await running;
+  }
   assert.equal(settled, true, "stop() ends the retry loop");
 });
 

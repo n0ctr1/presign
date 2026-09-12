@@ -45,7 +45,7 @@ Each of these is one command or one URL, so none of it has to be taken on trust.
   Tooling feedback, written daily rather than assembled at the end, is
   [`docs/feedback/ledger.md`](./docs/feedback/ledger.md).
 
-**In ten lines:**
+**In short:**
 
 - An agent sends an **unsigned** transaction. It comes back with a tier, the
   findings, and the provenance — *which deployment answered and how far behind
@@ -55,14 +55,13 @@ Each of these is one command or one URL, so none of it has to be taken on trust.
   budget 1s → `unavailable`.** Try both on the landing page.
 - Rules read the **state diff from a mainnet fork**, not the calldata, so an
   approval buried in a smart account's `execute` is still an approval.
-- Paid per call over **x402 on Hedera**, metered by the indexed deployments the
-  verdict actually reads, and journalled to **Hedera Consensus Service** under a
-  salted commitment.
-- Indexed protocol data comes from **The Graph**, through an operational layer
-  that measures conformance and liveness rather than trusting a manifest; proxy
-  upgrade history streams from **Substreams**.
-- A model can buy a verdict over **MCP**, and sign through one: `low` signs,
-  `medium` goes to a **Ledger** for a human, `high` never reaches the device.
+- Built solo, to a specification written before the first commit:
+  [`prompts/`](./prompts) holds it, and
+  [`docs/AI_USAGE.md`](./docs/AI_USAGE.md) records what was decided by hand,
+  what an AI tool typed, and the four decisions the test runs forced.
+
+Everything below is the evidence for the claims above; each section names the
+command that reproduces it.
 
 ## The claim, demonstrated
 

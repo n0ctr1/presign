@@ -462,3 +462,29 @@ test("both Hedera networks settle through Blocky402", () => {
   assert.equal(FACILITATORS["hedera:testnet"], "https://api.testnet.blocky402.com");
   assert.equal(FACILITATORS["hedera:mainnet"], "https://api.blocky402.com");
 });
+
+test("a guessed route is answered with the routes that exist, not a bare 404", async () => {
+  /*
+   * `/verdict` is the name a caller reaches for before reading anything, and
+   * the split into local and full is presign's own accounting rather than
+   * something they could have guessed.
+   */
+  const full = await appWith(pipeline("low")).request("/verdict", { method: "POST", body });
+  assert.equal(full.status, 404);
+  const named = (await full.json()) as { error: string; routes: Record<string, string> };
+  assert.equal(named.error, "unknown_route");
+  assert.deepEqual(Object.keys(named.routes).sort(), [
+    "GET /health",
+    "GET /quote",
+    "POST /verdict/full",
+    "POST /verdict/local",
+  ]);
+
+  // An instance without the full pipeline must not advertise a route it would
+  // then 404 on — the point of listing them is that the list is true.
+  const localOnly = await appWith().request("/verdict");
+  assert.equal(localOnly.status, 404);
+  const routes = ((await localOnly.json()) as { routes: Record<string, string> }).routes;
+  assert.ok(!("POST /verdict/full" in routes));
+  assert.ok("POST /verdict/local" in routes);
+});

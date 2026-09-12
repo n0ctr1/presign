@@ -1048,6 +1048,41 @@ export function createApp(options: ServiceOptions): PresignApp {
     );
   }
 
+  /*
+   * A bare 404 is the wrong answer to `curl https://presign.dev/verdict`, which
+   * is the first thing anyone tries: the verdict routes are split by what they
+   * cost and what they read, and a caller who guessed the unsplit name has
+   * asked a reasonable question. Name the routes rather than making them go
+   * and find /llms.txt.
+   */
+  app.notFound((c) =>
+    c.json(
+      {
+        error: "unknown_route",
+        message: "No route at this path. The verdict routes are split by what they read.",
+        routes: {
+          "POST /verdict/local": "simulation, R1 and R2 — paid, flat",
+          ...(options.pipelines.full === undefined
+            ? {}
+            : {
+                "POST /verdict/full":
+                  "the above plus R3 and R4 — paid, metered by the deployments R3 reads",
+              }),
+          "GET /quote": "prices a verdict without attempting payment — free",
+          "GET /health": "rules, journal topic and the age of every list — free",
+          ...(demo === undefined
+            ? {}
+            : {
+                "GET /demo/examples": "the fixed transactions this instance judges — free",
+                "GET /demo/verdict": "judge one of them at a chosen freshness budget — free",
+              }),
+        },
+        integration: "/llms.txt",
+      },
+      404,
+    ),
+  );
+
   const api = app as PresignApp;
   api.drainJournal = async (timeoutMs = 10_000) => {
     const deadline = Date.now() + timeoutMs;

@@ -148,6 +148,63 @@ test("the landing page's examples are cached, and a stale answer says its age", 
   assert.equal((await ask("example=usdc-transfer&budget=30")).status, 503);
 });
 
+test("an unavailable that came from a timeout is not held like an answer", async () => {
+  let calls = 0;
+  let clock = 1_700_000_000_000;
+  const verdict = (reason: string | null) => ({
+    tier: reason === null ? "low" : "unavailable",
+    action: "",
+    findings: [],
+    provenance: {
+      simulatedAtBlock: 1,
+      chainId: 1,
+      sources: [],
+      lists: [],
+      unavailableRules: reason === null ? [] : [{ ruleId: "R3", reason, detail: "" }],
+    },
+    effects: { observed: true, ethOutWei: "0", ethRecipients: [], tokensOut: [] },
+    evaluatedAt: "2026-09-12T00:00:00Z",
+  });
+  let answer = verdict("probe_failed");
+  const app = createApp({
+    pipelines: { local: pipeline("low") },
+    journal,
+    payTo: "0.0.10398276",
+    network: "hedera:testnet",
+    chainIds: [1],
+    facilitatorUrl: "http://127.0.0.1:9",
+    demo: {
+      examples: DEMO_EXAMPLES,
+      budgets: DEMO_BUDGETS,
+      ttlSeconds: 45,
+      now: () => clock,
+      evaluate: () => {
+        calls += 1;
+        return Promise.resolve(answer as never);
+      },
+    },
+  });
+  const ask = () => app.request("/demo/verdict?example=aave-pool&budget=60");
+
+  await ask();
+  assert.equal(calls, 1);
+
+  // A gateway timeout is a fault of the moment. Held for the full minute it
+  // kept the page showing a failure after the service had recovered.
+  clock += 10_000;
+  await ask();
+  assert.equal(calls, 2);
+
+  // A verdict, including an unavailable one that means what it says, is held.
+  clock += 10_000;
+  answer = verdict("all_candidates_stale");
+  await ask();
+  assert.equal(calls, 3);
+  clock += 10_000;
+  await ask();
+  assert.equal(calls, 3);
+});
+
 test("health reports whether a verdict could be produced, not that the process started", async () => {
   const app = createApp({
     pipelines: { local: pipeline("low") },

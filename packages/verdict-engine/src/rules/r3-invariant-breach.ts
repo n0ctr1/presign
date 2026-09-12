@@ -511,26 +511,45 @@ export class InvariantBreachRule implements Rule {
 
     if (specced.length === 0) return evaluated([]);
 
-    const probed = await Promise.all(
-      specced.map(async (entry) => ({
-        ...entry,
-        outcome: await this.#protocol.probeDeployment(
-          entry.candidate,
-          this.#requirementFor(entry.spec),
-          network,
-        ),
-      })),
+    const probe = (entry: (typeof specced)[number]) =>
+      this.#protocol.probeDeployment(entry.candidate, this.#requirementFor(entry.spec), network);
+
+    const conformingOf = <T extends { outcome: ProbeOutcome }>(entries: readonly T[]) =>
+      entries.flatMap((entry) =>
+        entry.outcome.status === "probed" &&
+        entry.outcome.record.conformance.missingFields.length === 0 &&
+        !entry.outcome.record.liveness.hasIndexingErrors
+          ? [{ ...entry, record: entry.outcome.record }]
+          : [],
+      );
+
+    let probed = await Promise.all(
+      specced.map(async (entry) => ({ ...entry, outcome: await probe(entry) })),
     );
+    let conforming = conformingOf(probed);
+
+    /*
+     * Nothing conformed and something failed: ask the failures again, one at a
+     * time.
+     *
+     * A probe is two gateway queries under a three-second budget, and several
+     * probes issued together contend for the same gateway. One timeout was
+     * then the whole answer — a wider freshness budget returning `unavailable`
+     * while a narrower one answered from the same deployment a moment earlier.
+     * A second, unhurried attempt costs a query and removes that.
+     */
+    if (conforming.length === 0 && probed.some((entry) => entry.outcome.status === "failed")) {
+      const retried: typeof probed = [];
+      for (const entry of probed) {
+        retried.push(
+          entry.outcome.status === "failed" ? { ...entry, outcome: await probe(entry) } : entry,
+        );
+      }
+      probed = retried;
+      conforming = conformingOf(probed);
+    }
 
     const failures = probed.filter((entry) => entry.outcome.status === "failed");
-
-    const conforming = probed.flatMap((entry) =>
-      entry.outcome.status === "probed" &&
-      entry.outcome.record.conformance.missingFields.length === 0 &&
-      !entry.outcome.record.liveness.hasIndexingErrors
-        ? [{ ...entry, record: entry.outcome.record }]
-        : [],
-    );
 
     if (conforming.length === 0) {
       /*

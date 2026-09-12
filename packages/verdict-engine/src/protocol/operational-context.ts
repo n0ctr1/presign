@@ -158,7 +158,17 @@ export class OperationalProtocolContext implements ProtocolContext {
       };
     }
 
-    this.#probes.set(key, { outcome, probedAt: this.#now() });
+    /*
+     * Only a completed probe is remembered.
+     *
+     * A failure is a fact about one attempt, not about the deployment. Cached,
+     * a single gateway timeout decided every verdict for the next ten seconds
+     * — which is how a wider freshness budget came back `unavailable` while a
+     * narrower one answered from the same deployment moments earlier.
+     */
+    if (outcome.status === "probed") {
+      this.#probes.set(key, { outcome, probedAt: this.#now() });
+    }
     return outcome;
   }
 

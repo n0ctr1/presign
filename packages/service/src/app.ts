@@ -561,8 +561,25 @@ export function createApp(options: ServiceOptions): PresignApp {
   if (demo !== undefined) {
     const demoTtl = (demo.ttlSeconds ?? 45) * 1000;
     const demoNow = demo.now ?? Date.now;
-    const answers = new LruMap<string, { verdict: Verdict; computedAt: number }>(64);
-    const running = new Map<string, Promise<{ verdict: Verdict; computedAt: number }>>();
+    type DemoAnswer = { verdict: Verdict; computedAt: number; holdMs: number };
+    const answers = new LruMap<string, DemoAnswer>(64);
+    const running = new Map<string, Promise<DemoAnswer>>();
+
+    /*
+     * How long an answer is worth reusing depends on why it says what it says.
+     *
+     * `unavailable` because every deployment is past the freshness budget is
+     * the product working, and is held like any other answer. `unavailable`
+     * because a probe timed out is a fault of the moment, and holding it for a
+     * minute left the page showing a failure long after the service had
+     * recovered — a wider budget reading `unavailable` while a narrower one
+     * answered, which is the opposite of what the slider is there to show.
+     */
+    const TRANSIENT = new Set(["probe_failed", "query_failed", "rule_error"]);
+    const holdFor = (verdict: Verdict) =>
+      verdict.provenance.unavailableRules.some((rule) => TRANSIENT.has(rule.reason))
+        ? Math.min(demoTtl, 8_000)
+        : demoTtl;
     const demoLimiter = createRateLimiter({ perMinute: 60 });
 
     const described = (example: DemoExample) => ({
@@ -622,7 +639,7 @@ export function createApp(options: ServiceOptions): PresignApp {
 
       const key = `${example.id}:${budget}`;
       const held = answers.get(key);
-      let answer = held !== undefined && demoNow() - held.computedAt < demoTtl ? held : undefined;
+      let answer = held !== undefined && demoNow() - held.computedAt < held.holdMs ? held : undefined;
       let staleBecause: string | null = null;
 
       if (answer === undefined) {
@@ -630,7 +647,7 @@ export function createApp(options: ServiceOptions): PresignApp {
         if (pending === undefined) {
           pending = demo
             .evaluate(example.transaction, budget)
-            .then((verdict) => ({ verdict, computedAt: demoNow() }));
+            .then((verdict) => ({ verdict, computedAt: demoNow(), holdMs: holdFor(verdict) }));
           running.set(key, pending);
           void pending.then(
             () => running.delete(key),

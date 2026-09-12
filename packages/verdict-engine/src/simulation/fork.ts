@@ -8,10 +8,19 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 
 export interface AnvilForkOptions {
   /** Upstream RPC the fork is taken from. */
   readonly forkUrl: string;
+  /**
+   * Port to listen on. Omit for one the OS says is free.
+   *
+   * A fixed default was a hazard rather than a convenience: if something else
+   * already held 8545, the readiness loop could be answered by that node and
+   * every verdict would then be simulated against a chain this process does
+   * not control, while reporting its own fork block.
+   */
   readonly port?: number;
   /** Pin the fork to a block, so a verdict is reproducible after the fact. */
   readonly forkBlockNumber?: number;
@@ -36,7 +45,13 @@ export class AnvilFork {
   }
 
   static async start(options: AnvilForkOptions): Promise<AnvilFork> {
-    const port = options.port ?? 8545;
+    const port = options.port ?? (await freePort());
+    if (await answersRpc(port)) {
+      throw new AnvilStartupError(
+        `something already answers JSON-RPC on port ${port}; simulating against ` +
+          "another node's state would produce verdicts about a chain this process does not own",
+      );
+    }
     const args = [
       "--fork-url",
       options.forkUrl,
@@ -56,6 +71,14 @@ export class AnvilFork {
       stdio: ["ignore", "ignore", "pipe"],
     });
 
+    // A binary that is missing or not executable emits `error`, never `exit`,
+    // so without this the loop below waits out its whole timeout and reports
+    // "not ready" for what is really "anvil is not installed".
+    const failure: { error: Error | null } = { error: null };
+    child.on("error", (error: Error) => {
+      failure.error = error;
+    });
+
     let stderr = "";
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {
@@ -66,6 +89,7 @@ export class AnvilFork {
     const deadline = Date.now() + (options.startupTimeoutMs ?? 60_000);
 
     while (Date.now() < deadline) {
+      if (failure.error !== null) throw new AnvilStartupError(failure.error.message);
       if (child.exitCode !== null) {
         throw new AnvilStartupError(stderr.trim() || `exited ${child.exitCode}`);
       }
@@ -96,5 +120,37 @@ export class AnvilFork {
 
   stop(): void {
     this.#child.kill();
+  }
+}
+
+/** A port the OS reports free, taken by binding and releasing it. */
+async function freePort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const probe = createServer();
+    probe.unref();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      probe.close(() => {
+        if (port === 0) reject(new Error("no free port"));
+        else resolve(port);
+      });
+    });
+  });
+}
+
+/** Whether something already answers JSON-RPC there. */
+async function answersRpc(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+      signal: AbortSignal.timeout(500),
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
 }

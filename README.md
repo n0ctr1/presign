@@ -15,6 +15,36 @@ The second half is the part nobody else returns.
 
 ![How a verdict is produced: an unsigned transaction is simulated on a mainnet fork, four rules read the state diff and indexed data, and the verdict carries a tier and the lag of the evidence behind it.](docs/verdict-flow.svg)
 
+### Judging this, by track
+
+Each of these is one command or one URL, so none of it has to be taken on trust.
+
+- **The Graph** — the operational layer is
+  [`packages/operational-layer`](./packages/operational-layer) and ships on its
+  own as [`packages/mcp-server`](./packages/mcp-server) with a `SKILL.md`.
+  Conformance is measured by query and liveness against chain head, never
+  declared. `npm run coverage` prints the 33 conforming deployments across 3
+  schema families and 5 networks; [Layer 1](#layer-1--the-operational-layer-over-indexed-data)
+  says what is layered on top of discovery, and [Prior art](#prior-art) says
+  what this is answering.
+- **Hedera** — the live service is x402-gated on Hedera testnet:
+  `POST https://presign.dev/verdict/full` returns a real 402 with its manifest,
+  and `GET /quote?to=<address>` prices a verdict *before* payment, metered by
+  the indexed deployments the verdict will actually read. Every verdict is
+  journalled to HCS topic
+  [`0.0.10413192`](https://hashscan.io/testnet/topic/0.0.10413192) under a
+  salted commitment. `npm run demo -- --paid` shows the inbound HBAR and the
+  outbound USDC against one transaction; see
+  [What a verdict costs](#what-a-verdict-costs).
+- **Ledger** — [`packages/ledger`](./packages/ledger) holds the DMK escalation
+  and the Key Ring secret source, both verified on a Nano X. `medium` goes to
+  the device, `high` never reaches it, and the signing broker in
+  [`packages/verdict-mcp`](./packages/verdict-mcp) lets a model ask for a
+  signature it can never hold the key for — see
+  [Letting a model sign](#letting-a-model-sign--only-through-a-verdict).
+  Tooling feedback, written daily rather than assembled at the end, is
+  [`docs/feedback/ledger.md`](./docs/feedback/ledger.md).
+
 **In ten lines:**
 
 - An agent sends an **unsigned** transaction. It comes back with a tier, the
@@ -402,9 +432,12 @@ with nothing mocked:
         1 queries, 0.01 USDC in total
 ```
 
-That run settled through x402.org's facilitator, which is the `0.0.9185802`
-fee payer above. The service has since moved to Blocky402's testnet
-facilitator; a settlement from it, checkable on the mirror node, is
+That block, and the response body further down, are from before the service was
+metered, which is why both charge a flat 0.005 HBAR; `GET /quote` prices a
+verdict today and the shape of the response is unchanged. The run settled
+through x402.org's facilitator, which is the `0.0.9185802` fee payer above. The
+service has since moved to Blocky402's testnet facilitator; a settlement from
+it, checkable on the mirror node, is
 `0.0.7162784@1789089549.242890259` — 0.001 HBAR from the agent to the service,
 the network fee paid by Blocky402's account.
 
@@ -597,7 +630,10 @@ budget it cannot raise, checked against the price in the 402 manifest **before**
 anything is signed — a paid tool invoked in a loop otherwise empties a wallet a
 cent at a time. Verified against the live service: a model bought a verdict over
 stdio for 0.005 HBAR, settled on Hedera, and a 0.004 HBAR budget refused the
-next one with nothing paid.
+next one with nothing paid. Both figures are from the flat-price run that
+verified this; the service is metered now, so the same two verdicts would cost
+what `/quote` says for their counterparties — the budget check is against the
+price in the 402 manifest, whatever that price is.
 
 It is kept separate from the data-layer server below on purpose: that one is
 built to be used without presign's rules, and paid verdicts inside it would

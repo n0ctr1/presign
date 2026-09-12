@@ -25,7 +25,7 @@
  * the stronger claim, and it is worth paying.
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type {
@@ -342,21 +342,42 @@ export class LedgerKeyRingSecretSource implements SecretSource {
     };
 
     await mkdir(dirname(this.#vaultPath), { recursive: true });
-    await writeFile(this.#vaultPath, JSON.stringify(this.#vault, null, 2), {
-      mode: 0o600,
-    });
+    // Written beside the vault and renamed over it. A crash halfway through a
+    // direct write leaves a truncated file, and every ciphertext stored before
+    // it becomes unreadable.
+    const temporary = `${this.#vaultPath}.${process.pid}.tmp`;
+    await writeFile(temporary, JSON.stringify(this.#vault, null, 2), { mode: 0o600 });
+    await rename(temporary, this.#vaultPath);
   }
 }
 
 async function readVault(path: string): Promise<VaultFile | null> {
+  let raw: string;
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as VaultFile;
-    if (parsed.version !== 1 || typeof parsed.trustchainId !== "string") {
-      throw new KeyRingError("vault_corrupt", `${path} is not a valid vault`);
-    }
-    return parsed;
+    raw = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof KeyRingError) throw error;
-    return null;
+    // Only "no such file" is a first run. Every other failure — a permission
+    // error, an I/O fault, a directory in the way — used to read as one, and
+    // the next store wrote a fresh vault over ciphertext that was still there.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new KeyRingError(
+      "vault_unreadable",
+      `${path} exists but could not be read: ${(error as Error).message}`,
+    );
   }
+
+  let parsed: VaultFile;
+  try {
+    parsed = JSON.parse(raw) as VaultFile;
+  } catch {
+    throw new KeyRingError(
+      "vault_corrupt",
+      `${path} is not valid JSON. Move it aside to start a new vault; overwriting it ` +
+        "would discard every secret it holds.",
+    );
+  }
+  if (parsed.version !== 1 || typeof parsed.trustchainId !== "string") {
+    throw new KeyRingError("vault_corrupt", `${path} is not a valid vault`);
+  }
+  return parsed;
 }

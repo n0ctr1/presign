@@ -144,11 +144,16 @@ whose blind spots go unstated invites more trust than it has earned.
   says what protocol the counterparty belongs to, and its consensus timestamp
   lands seconds before the agent broadcasts. Matching the two by time and
   protocol is realistic for anyone watching the mempool.
-- **Dependencies carry advisories.** `npm audit --omit=dev` reports
-  vulnerabilities in transitive dependencies of the Ledger DMK and the Hedera
-  SDK, among them `protobufjs`, `@grpc/grpc-js`, `undici` and `ws`.
-  Exploitability here is unconfirmed — the protobuf schemas are local, but gRPC
-  and undici sit on network paths — and they are not yet overridden.
+- **Dependencies carry advisories.** `npm audit --omit=dev` reports 32
+  vulnerabilities, one critical, all in transitive dependencies of the Ledger
+  DMK and the Hedera SDK: `protobufjs`, `@grpc/grpc-js`, `undici`, `ws` and the
+  React Native tree the Hedera SDK pulls in through its cryptography package.
+  Exploitability here is unconfirmed — the protobuf schemas are local, though
+  gRPC and undici do sit on network paths. Pinning them through npm `overrides`
+  was tried and does not take effect on this graph: npm records the override
+  and resolves the same versions. The alternative is regenerating the lockfile
+  or forcing major bumps of the SDKs, which is not a change to make without
+  running the device and the stream against it afterwards.
 
 ## Architecture
 
@@ -190,7 +195,7 @@ calldata.
 | Rule | What it catches |
 |---|---|
 | **R1** Approvals and flagged addresses | An allowance written in the state diff to a spender outside the allowlist that is at least 2^128, at least the token's total supply, or covers the owner's whole balance, and `setApprovalForAll` over a collection — including approvals nested inside a smart account's `execute`. Any approval to, call to or payment to an address on [ScamSniffer's open blacklist](https://github.com/scamsniffer/scam-database), fetched at startup and every six hours, is critical |
-| **R2** Mutable logic | Contract behind a proxy with a live admin or no timelock. Raises the tier only when the transaction adds exposure to it — sends it value, moves tokens into it, grants an allowance on it, or raises a balance it records for the sender — read from the state diff; otherwise the same finding is `info` |
+| **R2** Mutable logic | Contract behind a proxy with a live admin or no timelock. An implementation swap inside the transaction being judged raises the tier on its own; the standing admin finding raises it only when the transaction adds exposure to the contract — sends it value, moves tokens into it, grants an allowance on it, or raises a balance it records for the sender — read from the state diff; otherwise the same finding is `info` |
 | **R3** Invariant breach | States no accounting can produce: a negative balance, borrows above deposits, value locked against a zero token balance, shares outstanding with no assets behind them — read from a deployment whose own `_meta`, in the same response as the data, is inside the freshness budget |
 | **R4** Unidentified counterparty | No deployment in the registry indexes the contract, and code first appeared at the address N days ago; an age that could not be established is a warning, never an old contract |
 

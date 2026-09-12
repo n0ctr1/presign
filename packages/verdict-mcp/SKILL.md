@@ -25,6 +25,10 @@ whether the price is worth it.
 
 Every result also contains `what_to_do`. Follow it.
 
+A `medium` or `high` can also carry rules that could not run at all;
+`provenance.unavailableRules` names each one and why. Only `low` means every
+rule ran.
+
 **`unavailable` is not a softer `low`.** It means fresh data could not be
 obtained, so no judgement was made. Treating it as "nothing found" converts a
 failure to get data into permission to sign — the exact mistake this service

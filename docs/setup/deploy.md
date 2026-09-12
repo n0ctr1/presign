@@ -45,6 +45,7 @@ one is present. The file convention `scope__name` maps to the variable
 | `GATEWAY_MAX_SPEND_USDC` | ceiling on everything this process pays the gateway over x402. Defaults to `1` |
 | `REGISTRY_COMMAND`, `REGISTRY_ARGS` | how the registry subprocess is started. Default `npx -y subgraph-registry-mcp@0.10.1`; the image points them at the installed copy |
 | `PRESIGN_SECRETS_DIR` | directory read before the environment. Default `~/.presign/secrets` |
+| `ANVIL_PORT` | port for the simulation fork. Default: one the OS reports free |
 | `HOST`, `PORT` | bind address and port. Default `0.0.0.0:4021` |
 
 ### Set `HCS_TOPIC_ID`
@@ -71,8 +72,20 @@ another, so R3 reports its data unavailable rather than the wallet emptying.
 ## Health
 
 `/health` answers without payment and reports data-source liveness, which is
-what the container healthcheck uses. It is the honest readiness signal: the
-process is up and can say what it can currently see.
+what the container healthcheck uses. `ok` is a claim about the present: it asks
+the simulation fork on every call, and answers `503` with `not_ready` when the
+fork is gone, because a healthcheck that stays green while every verdict is a
+503 is worse than none. Data sources are reported but do not decide `ok` — a
+rule saying its data is unavailable is the service working.
+
+On `SIGTERM` the process stops accepting requests, lets the ones in flight
+finish, waits up to eight seconds for queued journal writes to land, and then
+exits; give the container at least twenty seconds to stop
+(`docker stop -t 20`, or `--stop-timeout 20` on `docker run`).
+
+One caveat worth knowing on a shared host: anvil takes the upstream RPC URL as
+a command-line argument, so an archive URL with a key in it is visible in the
+process list to anyone who can read `/proc` on that machine.
 
 ```bash
 curl -s http://localhost:4021/health

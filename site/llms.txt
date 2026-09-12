@@ -68,7 +68,9 @@ What this instance can currently see.
 }
 ```
 
-Read `sources[].live` before trusting an absence. When the proxy upgrade stream
+`ok` is about now, not about start-up: the service asks its simulation fork on
+every call and answers `503` with a `not_ready` line when no verdict could be
+produced. Read `sources[].live` before trusting an absence. When the proxy upgrade stream
 is not live, rule R2 reports upgrade history as unavailable rather than clean —
 a stopped stream's silence is not evidence that nothing happened.
 

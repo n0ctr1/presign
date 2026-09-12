@@ -247,7 +247,7 @@ This section tracks what is actually running, not what is planned.
 | Salted journal commitments | done — the public entry cannot be matched to a transaction without the caller's salt |
 | Fork age and list age in provenance | done — every verdict states how old its simulated block and its blacklist were |
 | R2 escalates only on added exposure | done — verified against live mainnet: a USDC transfer is `low`, an approval `medium` |
-| Signing broker (`sign_transaction`) | built — policy on simulated value outflows, fee and nonce from the chain, verdict bound by commitment, non-broadcastable device approval; every branch tested with real signatures from generated keys; a run on the Nano X is pending |
+| Signing broker (`sign_transaction`) | done — verified end to end on a Nano X with the agent key sealed in the Key Ring: `low` signed without the device, `medium` clear-signed on it and countersigned by the agent key, `high` refused without the device ever being asked. Journal entries 42–44 on topic `0.0.10413192` |
 | Transaction effects in every verdict | done — verified against live mainnet: a USDC or ETH transfer names the amount and the recipient |
 | Registry subprocess | done — one shared client, survives a missing binary, a crash and a stuck handshake, restarts, and sees none of the service's credentials |
 

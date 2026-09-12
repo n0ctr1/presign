@@ -171,6 +171,20 @@ function serializeSource(history: UpgradeHistorySource) {
   };
 }
 
+/**
+ * A deployment id the model supplies, which becomes a path segment on the
+ * gateway: letters and digits only, so it cannot leave the path it goes in.
+ */
+const deploymentIdSchema = z.string().regex(/^[A-Za-z0-9]{4,80}$/, "not a deployment id");
+
+/**
+ * A GraphQL field name, checked because it is interpolated into a query that
+ * runs on an operator's quota.
+ */
+const graphqlNameSchema = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "not a GraphQL field name");
+
 export function createServer(config: ServerConfig, now: () => Date = () => new Date()) {
   const server = new McpServer({ name: "presign", version: "0.0.1" });
 
@@ -242,9 +256,9 @@ export function createServer(config: ServerConfig, now: () => Date = () => new D
       description:
         "How far a specific deployment is behind chain head, in blocks and in seconds, and whether it reports indexing errors. Chain head comes from an independent RPC, so a stalled chain is distinguishable from a stalled indexer.",
       inputSchema: {
-        deployment_id: z
-          .string()
-          .describe("Pinned deployment id (IPFS hash, Qm…), not a subgraph id."),
+        deployment_id: deploymentIdSchema.describe(
+          "Pinned deployment id (IPFS hash, Qm…), not a subgraph id.",
+        ),
         network: z.string().default("mainnet"),
       },
     },
@@ -279,9 +293,9 @@ export function createServer(config: ServerConfig, now: () => Date = () => new D
       description:
         "Which of the named fields a deployment actually answers. Verified by executing a probe query, not by reading the schema: a field can be declared and still fail at execution.",
       inputSchema: {
-        deployment_id: z.string().describe("Pinned deployment id (IPFS hash)."),
-        root_field: z.string().describe("Root query field, e.g. markets."),
-        fields: z.array(z.string()).min(1).describe("Fields to probe."),
+        deployment_id: deploymentIdSchema.describe("Pinned deployment id (IPFS hash)."),
+        root_field: graphqlNameSchema.describe("Root query field, e.g. markets."),
+        fields: z.array(graphqlNameSchema).min(1).describe("Fields to probe."),
       },
     },
     async ({ deployment_id, root_field, fields }) => {

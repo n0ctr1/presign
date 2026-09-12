@@ -22,6 +22,22 @@ import type {
  * A list field arrives as `NON_NULL(LIST(NON_NULL(Market)))`, so the named type
  * sits up to four wrappers deep; the nesting below covers that.
  */
+/**
+ * A GraphQL field name, checked because these are interpolated into a query.
+ *
+ * The data-layer MCP server takes the root field and the field list from a
+ * model, and a "field" carrying braces would rewrite the document it lands in
+ * and spend an operator's gateway quota on whatever it asked for instead.
+ */
+const GRAPHQL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function assertGraphQLNames(names: readonly string[]): void {
+  const bad = names.filter((name) => !GRAPHQL_NAME.test(name));
+  if (bad.length > 0) {
+    throw new TypeError(`not GraphQL field names: ${bad.join(", ")}`);
+  }
+}
+
 const QUERY_TYPE_INTROSPECTION = `{
   __schema {
     queryType {
@@ -141,6 +157,7 @@ export class ConformanceProbe implements ConformanceChecker {
     fields: readonly string[],
   ): Promise<ReadonlySet<string>> {
     if (fields.length === 0) return new Set();
+    assertGraphQLNames([rootField, ...fields]);
 
     try {
       await this.#gateway.query(

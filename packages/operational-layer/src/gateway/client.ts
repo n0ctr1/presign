@@ -102,6 +102,23 @@ export class GatewayQueryError extends Error {
   }
 }
 
+/**
+ * A deployment id, which is letters and digits and nothing else.
+ *
+ * Checked because the id becomes a path segment. The data-layer MCP server
+ * takes it from a model, and "../" in a deployment id would send an operator's
+ * Studio key to a different gateway endpoint entirely. The shape of the id
+ * itself is the gateway's business — this only refuses anything that could
+ * leave the path it was put in.
+ */
+const DEPLOYMENT_ID = /^[A-Za-z0-9]{4,80}$/;
+
+function assertDeploymentId(deploymentId: DeploymentId): void {
+  if (!DEPLOYMENT_ID.test(deploymentId)) {
+    throw new GatewayQueryError(deploymentId, "not a deployment id", { httpStatus: null });
+  }
+}
+
 interface GraphQLBody {
   data?: unknown;
   errors?: unknown;
@@ -142,6 +159,7 @@ export class GatewayClient {
 
   /** Endpoint pinned to one immutable deployment. */
   deploymentUrl(deploymentId: DeploymentId): string {
+    assertDeploymentId(deploymentId);
     return this.#funding.url(this.#baseUrl, deploymentId);
   }
 
@@ -152,9 +170,12 @@ export class GatewayClient {
   ): Promise<T> {
     const funded = await this.#funding.headers();
 
+    // Outside the try: an id that is not an id is a caller's mistake, and
+    // wrapping it again would read as the gateway having failed.
+    const url = this.deploymentUrl(deploymentId);
+
     let response: Response;
     try {
-      const url = this.deploymentUrl(deploymentId);
       const init: RequestInit = {
         method: "POST",
         headers: {

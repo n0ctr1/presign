@@ -117,7 +117,7 @@ export class RegistrySubprocess implements RegistryToolCaller {
   readonly #now: () => number;
 
   #child: Child | null = null;
-  readonly #pending = new Map<number, Waiter>();
+  readonly #pending = new Map<string, Waiter>();
   #buffer = "";
   #nextId = 0;
   #ready: Promise<void> = Promise.resolve();
@@ -181,10 +181,11 @@ export class RegistrySubprocess implements RegistryToolCaller {
       this.#buffer = this.#buffer.slice(newline + 1);
       if (line === "") continue;
       try {
-        const message = JSON.parse(line) as { id?: number };
-        if (typeof message.id === "number") {
-          this.#pending.get(message.id)?.resolve(message);
-          this.#pending.delete(message.id);
+        const message = JSON.parse(line) as { id?: unknown };
+        if (typeof message.id === "string" || typeof message.id === "number") {
+          const id = String(message.id);
+          this.#pending.get(id)?.resolve(message);
+          this.#pending.delete(id);
         }
       } catch {
         // The registry writes progress lines alongside JSON-RPC frames.
@@ -199,7 +200,15 @@ export class RegistrySubprocess implements RegistryToolCaller {
     if (child !== this.#child || this.#failure !== null) {
       return Promise.reject(this.#failure?.error ?? new Error("registry was restarted"));
     }
-    const id = ++this.#nextId;
+    /*
+     * Ids carry this client's name.
+     *
+     * JSON-RPC ids are the caller's to choose, and a registry that also sends
+     * requests of its own — a ping, a progress notification — numbers them
+     * from one as well. Namespaced ids cannot collide with an answer meant for
+     * something else.
+     */
+    const id = `${this.#clientName}-${++this.#nextId}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);

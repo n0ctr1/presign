@@ -53,6 +53,36 @@ const secrets = new SecretResolver([
   new FileSecretSource(process.env["PRESIGN_SECRETS_DIR"] ?? join(homedir(), ".presign", "secrets")),
   new EnvSecretSource(),
 ]);
+/**
+ * The Device Management Kit rejects with plain objects rather than `Error`s, so
+ * `String(error)` prints `[object Object]` and the operator learns nothing at
+ * the moment they most need to. Unwrap the shapes it actually uses, then fall
+ * back to JSON before giving up.
+ */
+function describeError(error: unknown, depth = 0): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && error !== null && depth < 3) {
+    const shape = error as Record<string, unknown>;
+    const parts = ["_tag", "errorCode", "message"]
+      .map((key) => shape[key])
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const inner =
+      shape["originalError"] === undefined ? "" : describeError(shape["originalError"], depth + 1);
+    if (inner && !parts.includes(inner)) parts.push(inner);
+    if (parts.length > 0) return parts.join(": ");
+    try {
+      const json = JSON.stringify(error);
+      if (json !== undefined && json !== "{}") return json;
+    } catch {
+      // circular or otherwise unserialisable
+    }
+    const keys = Object.keys(shape);
+    if (keys.length > 0) return `unrecognised error with keys ${keys.join(", ")}`;
+  }
+  return String(error);
+}
+
 const readSecret = async (scope: string, name: string): Promise<string | null> => {
   try {
     const resolved = await secrets.resolve({ scope, name });
@@ -61,7 +91,7 @@ const readSecret = async (scope: string, name: string): Promise<string | null> =
     say(`${scope} ${name} from ${resolved.source} (${resolved.protection})`);
     return resolved.value;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeError(error);
     if (!/not found|no source/i.test(message)) say(`could not read ${scope} ${name}: ${message}`);
     return null;
   }
@@ -108,7 +138,7 @@ if (accountId !== null && rawKey !== null) {
     });
     say(`paying from ${accountId} on ${network}, session budget ${formatTinybars(budget)}`);
   } catch (error) {
-    say(`payer unavailable — ${error instanceof Error ? error.message : String(error)}`);
+    say(`payer unavailable — ${describeError(error)}`);
   }
 } else {
   say("no Hedera account configured; get_verdict will explain how to add one");
@@ -165,7 +195,11 @@ if (evmKey !== null) {
           : `medium verdicts need the Ledger at ${approver.address}`),
     );
   } catch (error) {
-    say(`signing broker unavailable — ${error instanceof Error ? error.message : String(error)}`);
+    const hint =
+      process.env["PRESIGN_LEDGER"] === "1"
+        ? " — unlock the device, open the Ethereum app, and on Linux install the udev rules from docs/setup/20-ledger.rules; unset PRESIGN_LEDGER to sign without it, which refuses every medium verdict"
+        : "";
+    say(`signing broker unavailable — ${describeError(error)}${hint}`);
   }
 }
 

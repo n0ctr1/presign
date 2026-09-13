@@ -77,6 +77,14 @@ verdict on the exact transaction and this server's policy:
 | `medium` | a human approves the decoded transaction on a Ledger first; `signed_after_human_approval`, or `declined_by_human`, or `escalation_required` when no device is attached |
 | `high`, `unavailable` | `decision: "refused"`, nothing signed |
 
+A `medium` verdict is not a stop sign for this tool — calling it **is** how you
+ask the human. `check_service` reports whether a device is attached and which
+one; when it is, `sign_transaction` puts the decoded transaction on that
+device's screen and blocks until a person approves or declines, and you get
+`signed_after_human_approval` or `declined_by_human` back. Declining is an
+answer, not a failure. What you must never do is sign a `medium` unattended, or
+go looking for another key when this tool refuses.
+
 Sending value is treated as `medium` whenever it goes to a recipient outside
 the server's allowlist or exceeds its per-transaction ceiling, even on a `low`
 verdict; `policy_reasons` in the result says why. Past the session ceiling, or

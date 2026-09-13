@@ -63,6 +63,23 @@ interface VerdictTransaction {
   readonly chainId: number;
 }
 
+/**
+ * What the caller needs to know about signing before it asks for a sender: a
+ * model that cannot see the key still has to name the account being judged, and
+ * with a broker present there is exactly one account it could be.
+ */
+function signingSummary(broker: VerdictServerConfig["broker"]) {
+  if (broker == null) {
+    return { available: false as const, signs_as: null, note: "No signing key here; pass transaction.from yourself." };
+  }
+  return {
+    available: true as const,
+    signs_as: broker.account.address,
+    medium_requires_device: broker.approver !== null,
+    device: broker.approver?.address ?? null,
+  };
+}
+
 function json(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
 }
@@ -191,11 +208,16 @@ export function createVerdictServer(config: VerdictServerConfig): McpServer {
     {
       title: "Check what the verdict service can see",
       description:
-        "Free. Which rules are running and whether the data sources are live. When the proxy upgrade " +
-        "stream is not live, rule R2 reports upgrade history as unavailable rather than clean.",
+        "Free. Which rules are running and whether the data sources are live, plus the address this " +
+        "server would sign as — that address is the sender to judge, so you never have to ask for it. " +
+        "When the proxy upgrade stream is not live, rule R2 reports upgrade history as unavailable " +
+        "rather than clean.",
       inputSchema: {},
     },
-    async () => json(await (await get(`${config.baseUrl}/health`)).json()),
+    async () => {
+      const health = (await (await get(`${config.baseUrl}/health`)).json()) as Record<string, unknown>;
+      return json({ ...health, signing: signingSummary(config.broker) });
+    },
   );
 
   server.registerTool(
@@ -211,7 +233,15 @@ export function createVerdictServer(config: VerdictServerConfig): McpServer {
       inputSchema: {
         transaction: z
           .object({
-            from: z.string().regex(ADDRESS).describe("Sender address, 0x-prefixed."),
+            from: z
+              .string()
+              .regex(ADDRESS)
+              .optional()
+              .describe(
+                "Sender address, 0x-prefixed. Optional when this server holds a signing key: it then " +
+                  "defaults to the address that would sign, which is the only sender it could use " +
+                  "anyway. check_service names it.",
+              ),
             to: z
               .string()
               .regex(ADDRESS)
@@ -244,8 +274,19 @@ export function createVerdictServer(config: VerdictServerConfig): McpServer {
           ),
       },
     },
-    async ({ transaction, route, journal }) =>
-      json((await purchase(transaction, route, journal)).result),
+    async ({ transaction, route, journal }) => {
+      const from = transaction.from ?? config.broker?.account.address;
+      if (from === undefined) {
+        return json({
+          error: "from_required",
+          detail:
+            "This server holds no signing key, so it cannot guess the sender. Pass the agent wallet " +
+            "address as transaction.from: the simulation reads that account's balances and allowances, " +
+            "and a verdict for the wrong sender is a verdict for a different transaction.",
+        });
+      }
+      return json((await purchase({ ...transaction, from }, route, journal)).result);
+    },
   );
 
   if (config.broker != null) {

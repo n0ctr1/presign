@@ -14,6 +14,12 @@ have not seen before. A verdict after signing is useless.
 `get_quote` and `check_service` are free. Use `get_quote` if you need to decide
 whether the price is worth it.
 
+`transaction.from` is the account being judged: the simulation reads its
+balances and allowances. When this server holds a signing key you may leave it
+out — it then defaults to the address that would sign, which is the only sender
+it could use anyway, and `check_service` names that address under `signing`.
+Pass `from` explicitly only when you mean a different wallet.
+
 ## What the tier obliges you to do
 
 | tier | do |

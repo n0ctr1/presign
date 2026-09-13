@@ -128,3 +128,69 @@ test("an unknown route is rejected by the schema, not sent to the service", asyn
   assert.equal(rejected, true);
   assert.equal(calls.length, 0);
 });
+
+test("with a signing key, get_verdict judges the account that would sign when no sender is given", async () => {
+  const bodies: string[] = [];
+  const payer = {
+    fetch: (async (_input: string, init?: { body?: string }) => {
+      bodies.push(init?.body ?? "");
+      return verdictBody("low");
+    }) as unknown as typeof globalThis.fetch,
+    spent: 0n,
+    budget: null,
+    remaining: null,
+    payments: [],
+  };
+  const signer = "0x6d216c0bb91d346e4b359ab6ee7277134821ffec";
+  const client = await connect({
+    baseUrl: "https://presign.test",
+    payer,
+    broker: { account: { address: signer }, chain: { fill: () => Promise.resolve({}) }, approver: null, policy: {} },
+  });
+
+  const { to, value, data, chainId } = TX;
+  await call(client, "get_verdict", { transaction: { to, value, data, chainId } });
+  assert.equal(JSON.parse(bodies[0]!).transaction.from, signer);
+
+  // An explicit sender still wins: the caller may be judging somebody else's wallet.
+  await call(client, "get_verdict", { transaction: TX });
+  assert.equal(JSON.parse(bodies[1]!).transaction.from, TX.from);
+});
+
+test("check_service names the address that would sign, so the sender never has to be guessed", async () => {
+  const health = () =>
+    new Response(JSON.stringify({ ok: true, rules: ["R1"] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const device = "0xe622e34cfd7d3dce5f8872f1ae9ad090738765d2";
+  const withKey = await connect({
+    baseUrl: "https://presign.test",
+    payer: null,
+    fetch: health,
+    broker: {
+      account: { address: "0x6d216c0bb91d346e4b359ab6ee7277134821ffec" },
+      chain: { fill: () => Promise.resolve({}) },
+      approver: { address: device },
+      policy: {},
+    },
+  });
+  const reported = (await call(withKey, "check_service", {})).signing as Record<string, unknown>;
+  assert.equal(reported.signs_as, "0x6d216c0bb91d346e4b359ab6ee7277134821ffec");
+  assert.equal(reported.medium_requires_device, true);
+  assert.equal(reported.device, device);
+
+  // Without a key there is nothing to default to, and the answer says so.
+  const without = await connect({ baseUrl: "https://presign.test", payer: null, fetch: health });
+  const none = (await call(without, "check_service", {})).signing as Record<string, unknown>;
+  assert.equal(none.available, false);
+  assert.equal(none.signs_as, null);
+});
+
+test("without a signing key, a missing sender is explained rather than guessed", async () => {
+  const { payer } = fakePayer(() => verdictBody("low"));
+  const client = await connect({ baseUrl: "https://presign.test", payer });
+  const { to, value, data, chainId } = TX;
+  const result = await call(client, "get_verdict", { transaction: { to, value, data, chainId } });
+  assert.equal(result.error, "from_required");
+});

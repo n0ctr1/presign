@@ -375,7 +375,9 @@ Without a Ledger, `-e HEDERA_TESTNET_AGENT_KEY=…` also works; the server says
 on start which source the key came from.
 
 - `get_quote` — free. Prices and which rules each route runs.
-- `check_service` — free. Which rules run and whether data sources are live.
+- `check_service` — free. Which rules run, whether data sources are live, and
+  under `signing` the address the server would sign as — that address is the
+  sender to judge, so `get_verdict` defaults `transaction.from` to it.
 - `get_verdict` — paid, from a session budget you cannot raise (0.1 HBAR by
   default, `PRESIGN_SESSION_BUDGET_HBAR`). Every result carries `what_to_do`;
   follow it. A payment that would exceed the budget is refused before anything

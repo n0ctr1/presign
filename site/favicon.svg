@@ -1,27 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="presign">
   <!--
-    The mark is the site's own plate: an ink tile with a hairline edge, and a
-    monospace p drawn as geometry rather than type, so it renders the same
-    wherever the font is not. The descender is what keeps it a p at 16 pixels.
-
-    Light mode swaps the plate for the paper the page uses under its verdict
-    stamps; browsers that ignore the media query keep the dark plate, which is
-    the one the tab strip usually sits on anyway.
+    The site's ink tile with a hairline edge, carrying the same single-stroke p
+    as the logo. Light mode swaps the plate for the paper the page prints its
+    verdict stamps on; browsers that ignore the query keep the dark plate, which
+    is the one a tab strip usually sits on anyway.
   -->
   <style>
     .plate { fill: #0A0E1A; }
     .edge  { stroke: #2E3C58; }
-    .mark  { stroke: #8B6BFF; }
+    .mark  { fill: #8B6BFF; }
     @media (prefers-color-scheme: light) {
       .plate { fill: #E9E3D5; }
       .edge  { stroke: #C9C0AB; }
-      .mark  { stroke: #6B45F5; }
+      .mark  { fill: #6B45F5; }
     }
   </style>
   <rect class="plate" width="32" height="32" rx="7"/>
   <rect class="edge" x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke-width="1"/>
-  <g class="mark" fill="none" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M10.7 7.6 V24.6"/>
-    <path d="M10.7 7.6 H16.2 A5 5 0 0 1 16.2 17.6 H10.7"/>
-  </g>
+  <path class="mark" fill-rule="evenodd" d="M20.50 3.42 L19.60 3.57 L18.72 3.82 L16.97 4.59 L15.37 5.67 L13.86 7.09 L12.44 8.92 L11.29 10.86 L10.47 12.64 L9.41 15.55 L8.10 14.96 L6.67 14.11 L6.58 13.97 L6.57 13.50 L6.43 13.13 L6.18 12.82 L5.88 12.63 L5.44 12.53 L4.98 12.60 L4.57 12.84 L4.30 13.21 L4.19 13.59 L4.21 13.98 L4.37 14.38 L4.65 14.68 L5.02 14.87 L5.36 14.93 L6.22 14.73 L7.93 16.19 L9.04 17.03 L8.35 20.99 L7.96 24.41 L7.80 26.60 L7.79 27.48 L7.94 28.21 L8.19 28.53 L8.53 28.60 L8.81 28.46 L8.96 28.13 L9.57 22.21 L10.05 19.12 L10.37 17.76 L10.51 17.76 L12.12 18.42 L13.35 18.81 L14.65 19.13 L15.62 19.29 L16.66 19.39 L18.45 19.39 L20.31 19.14 L21.27 18.88 L22.57 18.39 L23.42 17.95 L24.31 17.37 L25.20 16.63 L25.97 15.78 L26.58 14.93 L27.06 14.03 L27.41 13.16 L27.66 12.20 L27.80 10.96 L27.81 10.36 L27.67 9.20 L27.50 8.49 L27.15 7.53 L26.66 6.57 L26.05 5.72 L25.43 5.03 L24.66 4.41 L24.05 4.05 L23.31 3.74 L22.35 3.48 L21.62 3.40 L20.57 3.41 Z M20.84 4.81 L21.70 4.79 L22.34 4.87 L22.97 5.05 L23.93 5.55 L24.89 6.38 L25.59 7.39 L26.12 8.64 L26.37 9.93 L26.36 11.39 L26.11 12.60 L25.64 13.74 L24.78 15.00 L23.97 15.82 L22.94 16.58 L21.69 17.19 L20.46 17.59 L19.10 17.85 L17.15 17.94 L15.93 17.84 L14.89 17.68 L13.51 17.35 L12.30 16.94 L10.88 16.33 L10.78 16.25 L10.76 16.11 L11.52 13.77 L12.44 11.68 L13.58 9.73 L14.89 8.04 L16.23 6.77 L17.74 5.76 L19.21 5.13 L20.25 4.87 L20.79 4.81 Z"/>
 </svg>
